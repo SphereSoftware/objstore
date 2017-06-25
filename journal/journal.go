@@ -19,11 +19,14 @@ import (
 type Journal interface {
 	ID() ID
 	Get(k string) *FileMeta
+	Exists(k string) bool
 	Set(k string, m *FileMeta) error
-	Diff(j Journal) (added []*FileMeta, deleted []*FileMeta)
+	Delete(k string) error
+	MarkDeleted(k string) (*FileMeta, error)
+	Diff(j Journal) (added FileMetaList, deleted FileMetaList)
 	Range(start string, limit int, fn func(k string, v *FileMeta) error) (string, error)
 	Join(target Journal, mapping Mapping) error
-	List() []*FileMeta
+	List() FileMetaList
 	Close() error
 	Meta() *JournalMeta
 }
@@ -70,6 +73,17 @@ func (b *btreeJournal) Get(k string) *FileMeta {
 	return nil
 }
 
+func (b *btreeJournal) Exists(k string) bool {
+	b.mux.Lock()
+	if b.closed {
+		b.mux.Unlock()
+		return false
+	}
+	_, ok := b.t.Get(k)
+	b.mux.Unlock()
+	return ok
+}
+
 func (b *btreeJournal) Set(k string, m *FileMeta) error {
 	if m == nil {
 		return errors.New("journal: nil entries not allowed")
@@ -85,6 +99,52 @@ func (b *btreeJournal) Set(k string, m *FileMeta) error {
 	b.t.Set(k, m)
 	b.mux.Unlock()
 	return nil
+}
+
+func (b *btreeJournal) Delete(k string) error {
+	if len(k) == 0 {
+		return errors.New("journal: zero-length keys not allowed")
+	}
+	b.mux.Lock()
+	if b.closed {
+		b.mux.Unlock()
+		return closedErr
+	}
+	b.t.Delete(k)
+	b.mux.Unlock()
+	return nil
+}
+
+func (b *btreeJournal) MarkDeleted(k string) (*FileMeta, error) {
+	if len(k) == 0 {
+		return nil, errors.New("journal: zero-length keys not allowed")
+	}
+	b.mux.Lock()
+	if b.closed {
+		b.mux.Unlock()
+		return nil, closedErr
+	}
+	var meta *FileMeta
+	oldV, written := b.t.Put(k, func(oldV interface{}, exists bool) (interface{}, bool) {
+		if !exists || oldV == nil {
+			return nil, false
+		}
+		meta := new(FileMeta)
+		meta.UnmarshalMsg(oldV.([]byte))
+		meta.IsDeleted = true
+		meta.Timestamp = time.Now().UnixNano()
+		meta.Size = 0
+		meta.UserMeta = nil
+		meta.Name = ""
+		newV, _ := meta.MarshalMsg(nil)
+		return newV, true
+	})
+	if written {
+		meta = new(FileMeta)
+		meta.UnmarshalMsg(oldV.([]byte))
+	}
+	b.mux.Unlock()
+	return meta, nil
 }
 
 var closedErr = errors.New("journal: closed already")
@@ -150,7 +210,7 @@ func (b *btreeJournal) ID() ID {
 	return b.id
 }
 
-func (b *btreeJournal) List() []*FileMeta {
+func (b *btreeJournal) List() FileMetaList {
 	b.mux.Lock()
 	if b.closed {
 		b.mux.Unlock()
@@ -158,9 +218,11 @@ func (b *btreeJournal) List() []*FileMeta {
 	}
 	iter, err := b.t.SeekFirst()
 	b.mux.Unlock()
-	defer iter.Close()
+	if err == nil {
+		defer iter.Close()
+	}
 
-	var list []*FileMeta
+	var list FileMetaList
 	var v interface{}
 	for err == nil {
 		b.mux.Lock()
@@ -173,7 +235,7 @@ func (b *btreeJournal) List() []*FileMeta {
 	return list
 }
 
-func (prev *btreeJournal) Diff(next Journal) (added []*FileMeta, deleted []*FileMeta) {
+func (prev *btreeJournal) Diff(next Journal) (added FileMetaList, deleted FileMetaList) {
 	switch next := next.(type) {
 	case *btreeJournal:
 		prev.mux.Lock()
@@ -183,7 +245,9 @@ func (prev *btreeJournal) Diff(next Journal) (added []*FileMeta, deleted []*File
 		}
 		prevIter, prevErr := prev.t.SeekFirst()
 		prev.mux.Unlock()
-		defer prevIter.Close()
+		if prevErr == nil {
+			defer prevIter.Close()
+		}
 		next.mux.Lock()
 		if next.closed {
 			next.mux.Unlock()
@@ -191,7 +255,9 @@ func (prev *btreeJournal) Diff(next Journal) (added []*FileMeta, deleted []*File
 		}
 		nextIter, nextErr := next.t.SeekFirst()
 		next.mux.Unlock()
-		defer nextIter.Close()
+		if nextErr == nil {
+			defer nextIter.Close()
+		}
 
 		switch {
 		case prevErr == io.EOF && nextErr == io.EOF:
@@ -269,7 +335,9 @@ func (prev *btreeJournal) Diff(next Journal) (added []*FileMeta, deleted []*File
 		}
 		prevIter, prevErr := prev.t.SeekFirst()
 		prev.mux.Unlock()
-		defer prevIter.Close()
+		if prevErr == nil {
+			defer prevIter.Close()
+		}
 		nextIter := next.b.Cursor()
 
 		switch {
@@ -345,7 +413,7 @@ func (prev *btreeJournal) Diff(next Journal) (added []*FileMeta, deleted []*File
 	}
 }
 
-func (prev *kvJournal) Diff(next Journal) (added []*FileMeta, deleted []*FileMeta) {
+func (prev *kvJournal) Diff(next Journal) (added FileMetaList, deleted FileMetaList) {
 	switch next := next.(type) {
 	case *kvJournal:
 		prevIter := prev.b.Cursor()
@@ -427,7 +495,9 @@ func (prev *kvJournal) Diff(next Journal) (added []*FileMeta, deleted []*FileMet
 		}
 		nextIter, nextErr := next.t.SeekFirst()
 		next.mux.Unlock()
-		defer nextIter.Close()
+		if nextErr == nil {
+			defer nextIter.Close()
+		}
 		prevIter := prev.b.Cursor()
 
 		switch {
@@ -532,7 +602,7 @@ func (j *kvJournal) Join(target Journal, mapping Mapping) error {
 		k, v = cur.Next()
 	}
 
-	meta.JoinedAt = time.Now().Unix()
+	meta.JoinedAt = time.Now().UnixNano()
 	meta.ID = target.ID() // relocate mapping
 	mapping.Set(j.id, meta)
 	return nil
@@ -572,6 +642,10 @@ func (j *kvJournal) Get(k string) *FileMeta {
 	return meta
 }
 
+func (j *kvJournal) Exists(k string) bool {
+	return j.b.Get([]byte(k)) != nil
+}
+
 func (j *kvJournal) Set(k string, m *FileMeta) error {
 	v, err := m.MarshalMsg(nil)
 	if err != nil {
@@ -580,10 +654,32 @@ func (j *kvJournal) Set(k string, m *FileMeta) error {
 	return j.b.Put([]byte(k), v)
 }
 
-func (j *kvJournal) List() []*FileMeta {
+func (j *kvJournal) Delete(k string) error {
+	return j.b.Delete([]byte(k))
+}
+
+func (j *kvJournal) MarkDeleted(k string) (*FileMeta, error) {
+	data := j.b.Get([]byte(k))
+	if data == nil {
+		return nil, nil
+	}
+	meta := new(FileMeta)
+	meta.UnmarshalMsg(data)
+	oldMeta := *meta
+	meta.IsDeleted = true
+	meta.Timestamp = time.Now().UnixNano()
+	meta.Size = 0
+	meta.UserMeta = nil
+	meta.Name = ""
+	data, _ = meta.MarshalMsg(nil)
+	err := j.b.Put([]byte(k), data)
+	return &oldMeta, err
+}
+
+func (j *kvJournal) List() FileMetaList {
 	cur := j.b.Cursor()
 	k, v := cur.First()
-	var list []*FileMeta
+	var list FileMetaList
 	for k != nil {
 		if v != nil {
 			meta := new(FileMeta)
@@ -625,7 +721,7 @@ func NewJournal(id ID, tx *bolt.Tx, bucket *bolt.Bucket) Journal {
 
 // MakeJournal allows to represent a serialized list of events
 // as an in-memory journal compatible with journals backed by a real KV store.
-func MakeJournal(id ID, events []*FileMeta) Journal {
+func MakeJournal(id ID, events FileMetaList) Journal {
 	j := &btreeJournal{
 		id:  id,
 		mux: new(sync.Mutex),

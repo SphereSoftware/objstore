@@ -14,7 +14,8 @@ type LocalStorage interface {
 	Prefix() string
 	Read(key string) (*os.File, error)
 	Stat(key string) (os.FileInfo, error)
-	Write(key string, body io.Reader) error
+	Remove(ket string) error
+	Write(key string, body io.Reader) (int64, error)
 	ListFiles(prefix string) ([]os.FileInfo, error)
 	CheckAccess(prefix string) error
 	DiskStats() (*DiskStats, error)
@@ -42,14 +43,17 @@ func (l *localStorage) Stat(key string) (os.FileInfo, error) {
 	return os.Stat(filepath.Join(l.prefix, key))
 }
 
-func (l *localStorage) Write(key string, body io.Reader) error {
+func (l *localStorage) Remove(key string) error {
+	return os.Remove(filepath.Join(l.prefix, key))
+}
+
+func (l *localStorage) Write(key string, body io.Reader) (int64, error) {
 	f, err := os.OpenFile(filepath.Join(l.prefix, key), os.O_WRONLY|os.O_TRUNC|os.O_CREATE, 0600)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer f.Close()
-	_, err = io.Copy(f, body)
-	return err
+	return io.Copy(f, body)
 }
 
 func (l *localStorage) ListFiles(path string) ([]os.FileInfo, error) {
@@ -75,7 +79,9 @@ func (l *localStorage) ListFiles(path string) ([]os.FileInfo, error) {
 
 func (l *localStorage) CheckAccess(path string) error {
 	body := []byte(time.Now().UTC().String())
-	return l.Write(filepath.Join(path, "_objstore_touch"), bytes.NewReader(body))
+	key := filepath.Join(path, "_objstore_touch")
+	_, err := l.Write(key, bytes.NewReader(body))
+	return err
 }
 
 type DiskStats struct {

@@ -153,6 +153,7 @@ func runCmd(c *cli.Cmd) {
 		if err != nil {
 			closer.Fatalln("[ERR]", err)
 		}
+		store.SetDebug(debugEnabled)
 		privateServer.RouteAPI(store)
 		if err := privateServer.ListenAndServe(*privateAddr); err != nil {
 			closer.Fatalln(err)

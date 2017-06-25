@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -170,6 +171,8 @@ func (p *PrivateServer) RouteAPI(store objstore.Store) {
 	r.POST("/private/v1/announce", p.AnnounceHandler(store))
 	r.GET("/private/v1/get/:id", p.GetHandler(store))
 	r.POST("/private/v1/message", p.MessageHandler(store))
+	r.POST("/private/v1/put", p.PutHandler(store))
+	r.POST("/private/v1/sync", p.SyncHandler(store))
 	p.mux = r
 }
 
@@ -250,4 +253,78 @@ func serveObject(c *gin.Context, r io.ReadCloser, meta *objstore.FileMeta) {
 	c.Header("Content-Type", ctype)
 	c.Header("Content-Length", strconv.FormatInt(meta.Size, 10))
 	io.CopyN(c.Writer, r, meta.Size)
+}
+
+func (p *PrivateServer) PutHandler(store objstore.Store) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		putObject(c, store)
+	}
+}
+
+func putObject(c *gin.Context, store objstore.Store) {
+	userMeta := func(data string) interface{} {
+		if len(data) == 0 {
+			return nil
+		}
+		var v interface{}
+		json.Unmarshal([]byte(data), &v)
+		return v
+	}
+	size, _ := strconv.ParseInt(c.Request.Header.Get("Content-Length"), 10, 64)
+	meta := &objstore.FileMeta{
+		ID:        c.Request.Header.Get("X-Meta-ID"),
+		Name:      c.Request.Header.Get("X-Meta-Name"),
+		UserMeta:  userMeta(c.Request.Header.Get("X-Meta-UserMeta")),
+		Timestamp: time.Now().UnixNano(),
+		Size:      size,
+	}
+	if len(meta.ID) == 0 {
+		c.String(400, "error: ID not specified, use /id to get one")
+		return
+	} else if !objstore.CheckUUID(meta.ID) {
+		err := fmt.Errorf("objstore: wrong ID: %s", meta.ID)
+		c.String(400, "error: %v", err)
+		return
+	}
+	levelData := c.Request.Header.Get("X-Meta-Level")
+	if len(levelData) == 0 {
+		level, _ := (objstore.ConsistencyLevel)(0).Check()
+		meta.Consistency = level
+	} else {
+		n, _ := strconv.Atoi(levelData)
+		level, err := (objstore.ConsistencyLevel)(n).Check()
+		if err != nil {
+			c.String(400, "error: %v", err)
+			return
+		}
+		meta.Consistency = level
+	}
+	if _, err := store.PutObject(c, c.Request.Body, meta); err != nil {
+		c.String(400, "error: %v", err)
+		return
+	}
+	c.Status(200)
+}
+
+type SyncResponse struct {
+	Added   objstore.FileMetaList `json:"list_added"`
+	Deleted objstore.FileMetaList `json:"list_deleted"`
+}
+
+func (p *PrivateServer) SyncHandler(store objstore.Store) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		var list objstore.FileMetaList
+		if err := c.BindJSON(&list); err != nil {
+			return
+		}
+		added, deleted, err := store.Diff(list)
+		if err != nil {
+			c.String(400, "error: %v", err)
+			return
+		}
+		c.JSON(200, SyncResponse{
+			Added:   added,
+			Deleted: deleted,
+		})
+	}
 }

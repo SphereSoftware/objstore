@@ -1,19 +1,27 @@
 package journal
 
-import "fmt"
+import (
+	"fmt"
+	"time"
+)
 
 type FileMeta struct {
-	ID        string      `msgp:"0" json:"file_id"  `
-	Name      string      `msgp:"1" json:"file_name"`
-	Size      int64       `msgp:"2" json:"file_size"`
-	Timestamp int64       `msgp:"3" json:"timestamp"`
-	UserMeta  interface{} `msgp:"4" json:"user_meta"`
-	IsSymlink bool        `msgp:"5" json:"is_symlink"`
-
+	ID          string           `msgp:"0" json:"file_id"  `
+	Name        string           `msgp:"1" json:"file_name"`
+	Size        int64            `msgp:"2" json:"file_size"`
+	Timestamp   int64            `msgp:"3" json:"timestamp"`
+	UserMeta    interface{}      `msgp:"4" json:"user_meta"`
+	IsSymlink   bool             `msgp:"5" json:"is_symlink"`
 	Consistency ConsistencyLevel `msgp:"6" json:"consistency"`
+	IsDeleted   bool             `msgp:"7" json:"is_deleted"`
 }
 
+type FileMetaList []*FileMeta
+
 func (m FileMeta) String() string {
+	if m.IsDeleted {
+		return fmt.Sprintf("%s: %s (deleted)")
+	}
 	return fmt.Sprintf("%s: %s (%db->%v)", m.ID, m.Name, m.Size, m.IsSymlink)
 }
 
@@ -48,5 +56,7 @@ func (j JournalMeta) String() string {
 	if len(j.LastKey) == 0 {
 		j.LastKey = "?"
 	}
-	return fmt.Sprintf("%s: %s-%s (count: %d) joined: %v", j.ID, j.FirstKey, j.LastKey, j.CountTotal, j.JoinedAt > 0)
+	ts := time.Unix(0, j.CreatedAt).UTC().Format(time.StampMilli)
+	return fmt.Sprintf("%s (%s): %s-%s (count: %d) joined: %v",
+		j.ID, ts, j.FirstKey, j.LastKey, j.CountTotal, j.JoinedAt > 0)
 }

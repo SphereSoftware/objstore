@@ -131,6 +131,6 @@ func (p *PublicServer) MetaHandler(store objstore.Store) gin.HandlerFunc {
 
 func (p *PublicServer) PutHandler(store objstore.Store) gin.HandlerFunc {
 	return func(c *gin.Context) {
-
+		putObject(c, store)
 	}
 }

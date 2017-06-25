@@ -1,6 +1,7 @@
 package journal
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"time"
@@ -9,11 +10,17 @@ import (
 )
 
 type JournalManager interface {
-	ListAll() ([]*JournalMeta, error)
-	JoinAll() (*JournalMeta, error)
-
 	Create(id ID) error
+	View(id ID, fn JournalIter) error
+	Update(id ID, fn JournalIter) error
+
 	ForEach(fn JournalIter) error
+	ForEachUpdate(fn JournalIter) error
+
+	JoinAll(target ID) (*JournalMeta, error)
+	ListAll() ([]*JournalMeta, error)
+	ExportAll() (FileMetaList, error)
+
 	Close() error
 }
 
@@ -52,38 +59,139 @@ func (kv *kvJournalManager) Create(id ID) error {
 		}
 		meta := &JournalMeta{
 			ID:        id,
-			CreatedAt: time.Now().Unix(),
+			CreatedAt: time.Now().UnixNano(),
 		}
 		data, _ := meta.MarshalMsg(nil)
 		return mapping.Put(journalID, data)
 	})
 }
 
-func (kv *kvJournalManager) ListAll() ([]*JournalMeta, error) {
-	var metas []*JournalMeta
-	err := kv.db.View(func(tx *bolt.Tx) error {
+func (kv *kvJournalManager) View(id ID, fn JournalIter) error {
+	return kv.db.View(func(tx *bolt.Tx) error {
+		journalID := []byte(id)
 		mapping := tx.Bucket(mappingBucket)
-		metas = make([]*JournalMeta, 0, mapping.Stats().KeyN)
-		cur := mapping.Cursor()
+		journals := tx.Bucket(journalsBucket)
+		data := mapping.Get(journalID)
+		var meta *JournalMeta
+		if data == nil {
+			return errors.New("kvJournal: journal mapping not exists")
+		} else {
+			meta = new(JournalMeta)
+			meta.UnmarshalMsg(data)
+		}
+		b := journals.Bucket(journalID)
+		if b == nil {
+			return errors.New("kvJournal: journal not exists")
+		}
+		journal := NewJournal(id, tx, b)
+		return fn(journal, meta)
+	})
+}
 
-		id, data := cur.First()
+func (kv *kvJournalManager) Update(id ID, fn JournalIter) error {
+	return kv.db.Update(func(tx *bolt.Tx) error {
+		journalID := []byte(id)
+		mapping := tx.Bucket(mappingBucket)
+		journals := tx.Bucket(journalsBucket)
+		data := mapping.Get(journalID)
+		var meta *JournalMeta
+		if data == nil {
+			return errors.New("kvJournal: journal mapping not exists")
+		} else {
+			meta = new(JournalMeta)
+			meta.UnmarshalMsg(data)
+		}
+		b := journals.Bucket(journalID)
+		if b == nil {
+			return errors.New("kvJournal: journal not exists")
+		}
+		journal := NewJournal(id, tx, b)
+		return fn(journal, meta)
+	})
+}
+
+func (kv *kvJournalManager) ListAll() (metaList []*JournalMeta, err error) {
+	err = kv.db.View(func(tx *bolt.Tx) error {
+		mapping := tx.Bucket(mappingBucket)
+		journals := tx.Bucket(journalsBucket)
+		metaList = make([]*JournalMeta, 0, journals.Stats().KeyN)
+		cur := journals.Cursor()
+
+		id, _ := cur.First()
 		for id != nil {
-			var meta *JournalMeta
-			if data != nil {
-				meta = new(JournalMeta)
-				meta.UnmarshalMsg(data)
-				metas = append(metas, meta)
+			journal := NewJournal(ID(id), tx, journals.Bucket(id))
+			meta := journal.Meta()
+			if data := mapping.Get(id); data != nil {
+				extraMeta := new(JournalMeta)
+				extraMeta.UnmarshalMsg(data)
+				meta.CreatedAt = extraMeta.CreatedAt
+				meta.JoinedAt = extraMeta.JoinedAt
 			}
-			id, data = cur.Next()
+			metaList = append(metaList, meta)
+			id, _ = cur.Next()
 		}
 		return nil
 	})
-	return metas, err
+	return
 }
 
-func (kv *kvJournalManager) JoinAll() (*JournalMeta, error) {
-	// a b c -> a c -> c
-	panic("not implemented")
+func (kv *kvJournalManager) JoinAll(target ID) (*JournalMeta, error) {
+	kv.Create(target) // for safety reasons ensure that journal exists
+
+	var targetMeta *JournalMeta
+	err := kv.db.Update(func(tx *bolt.Tx) error {
+		mapping := tx.Bucket(mappingBucket)
+		journals := tx.Bucket(journalsBucket)
+		cur := journals.Cursor()
+
+		journalID := []byte(target)
+		targetJournal := NewJournal(target, tx, journals.Bucket(journalID))
+
+		id, _ := cur.First()
+		for id != nil {
+			if bytes.Equal(id, journalID) {
+				id, _ = cur.Next()
+				continue
+			}
+			journal := NewJournal(ID(id), tx, journals.Bucket(id))
+			if _, err := journal.Range("", 0, func(k string, v *FileMeta) error {
+				if targetJournal.Exists(k) {
+					// disallow override upon consolidation from older journals
+					return nil
+				}
+				return targetJournal.Set(k, v)
+			}); err != nil {
+				return err
+			}
+
+			meta := journal.Meta()
+			meta.JoinedAt = time.Now().UnixNano()
+			meta.ID = target // relocated journal
+			if data := mapping.Get(id); data != nil {
+				extraMeta := new(JournalMeta)
+				extraMeta.UnmarshalMsg(data)
+				meta.CreatedAt = extraMeta.CreatedAt
+			}
+			data, _ := meta.MarshalMsg(nil)
+			if err := mapping.Put(id, data); err != nil {
+				return err
+			}
+			if err := journals.DeleteBucket(id); err != nil {
+				return err
+			}
+			id, _ = cur.Next()
+		}
+
+		targetMeta = targetJournal.Meta()
+		if data := mapping.Get(journalID); data != nil {
+			extraMeta := new(JournalMeta)
+			extraMeta.UnmarshalMsg(data)
+			targetMeta.CreatedAt = extraMeta.CreatedAt
+		}
+		data, _ := targetMeta.MarshalMsg(nil)
+		return mapping.Put(journalID, data)
+	})
+	return targetMeta, err
 }
 
 func (kv *kvJournalManager) ForEach(fn JournalIter) error {
@@ -99,9 +207,6 @@ func (kv *kvJournalManager) ForEach(fn JournalIter) error {
 				meta = new(JournalMeta)
 				meta.UnmarshalMsg(data)
 			}
-
-			// log.Println("view journal", string(id), "\n", meta)
-
 			journal := NewJournal(ID(id), tx, journals.Bucket(id))
 			if err := fn(journal, meta); err == RangeStop {
 				return nil
@@ -112,6 +217,47 @@ func (kv *kvJournalManager) ForEach(fn JournalIter) error {
 		}
 		return nil
 	})
+}
+
+func (kv *kvJournalManager) ForEachUpdate(fn JournalIter) error {
+	return kv.db.Update(func(tx *bolt.Tx) error {
+		mapping := tx.Bucket(mappingBucket)
+		journals := tx.Bucket(journalsBucket)
+		cur := journals.Cursor()
+
+		id, _ := cur.First()
+		for id != nil {
+			var meta *JournalMeta
+			if data := mapping.Get(id); data != nil {
+				meta = new(JournalMeta)
+				meta.UnmarshalMsg(data)
+			}
+			journal := NewJournal(ID(id), tx, journals.Bucket(id))
+			if err := fn(journal, meta); err == RangeStop {
+				return nil
+			} else if err != nil {
+				return err
+			}
+			id, _ = cur.Next()
+		}
+		return nil
+	})
+}
+
+func (kv *kvJournalManager) ExportAll() (FileMetaList, error) {
+	var list FileMetaList
+	err := kv.db.View(func(tx *bolt.Tx) error {
+		journals := tx.Bucket(journalsBucket)
+		cur := journals.Cursor()
+		id, _ := cur.First()
+		for id != nil {
+			journal := NewJournal(ID(id), tx, journals.Bucket(id))
+			list = append(list, journal.List()...)
+			id, _ = cur.Next()
+		}
+		return nil
+	})
+	return list, err
 }
 
 func (kv *kvJournalManager) Close() error {

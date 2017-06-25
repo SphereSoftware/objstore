@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/xlab/closer"
 	"github.com/xlab/objstore/cluster"
 	"github.com/xlab/objstore/journal"
 	"github.com/xlab/objstore/storage"
@@ -16,6 +17,8 @@ import (
 
 type Store interface {
 	NodeID() string
+	IsReady() bool
+	SetDebug(v bool)
 	WaitOutbound(timeout time.Duration)
 	WaitInbound(timeout time.Duration)
 	ReceiveEventAnnounce(event *EventAnnounce)
@@ -36,6 +39,12 @@ type Store interface {
 	// This should be called only on a total cache miss, when file is not found
 	// on any node of the cluster.
 	FetchObject(ctx context.Context, id string) (io.ReadCloser, *FileMeta, error)
+	// PutObject writes object to the local storage, emits cluster announcements, optionally
+	// writes object to remote storage, e.g. Amazon S3. Returns amount of bytes written.
+	PutObject(ctx context.Context, r io.ReadCloser, meta *FileMeta) (int64, error)
+	// Diff finds the difference between serialized exernal journal represented as list,
+	// and journals currently available on this local node.
+	Diff(list FileMetaList) (added, deleted FileMetaList, err error)
 }
 
 var ErrNotFound = errors.New("not found")
@@ -44,12 +53,36 @@ type DiskStats storage.DiskStats
 
 type EventAnnounce cluster.EventAnnounce
 
+type ConsistencyLevel journal.ConsistencyLevel
+
+func (c ConsistencyLevel) Check() (journal.ConsistencyLevel, error) {
+	level := (journal.ConsistencyLevel)(c)
+	switch level {
+	case journal.ConsistencyLocal, journal.ConsistencyS3, journal.ConsistencyFull:
+		return level, nil
+	default:
+		return 0, errors.New("objstore: invalid consistency level")
+	}
+}
+
 const (
 	EventOpaqueData cluster.EventType = cluster.EventOpaqueData
 )
 
+type storeState int
+
+const (
+	storeInactiveState storeState = 0
+	storeSyncState     storeState = 1
+	storeActiveState   storeState = 2
+)
+
 type objStore struct {
 	nodeID string
+	debug  bool
+
+	stateMux *sync.RWMutex
+	state    storeState
 
 	localStorage  storage.LocalStorage
 	remoteStorage storage.RemoteStorage
@@ -71,7 +104,7 @@ func NewStore(nodeID string,
 	journals journal.JournalManager,
 	cluster cluster.ClusterManager,
 ) (Store, error) {
-	if !checkUUID(nodeID) {
+	if !CheckUUID(nodeID) {
 		return nil, errors.New("objstore: invalid node ID")
 	}
 	if localStorage == nil {
@@ -101,7 +134,8 @@ func NewStore(nodeID string,
 	outboundAnnounces := make(chan *EventAnnounce, 1024)
 	inboundAnnounces := make(chan *EventAnnounce, 1024)
 	store := &objStore{
-		nodeID: nodeID,
+		nodeID:   nodeID,
+		stateMux: new(sync.RWMutex),
 
 		localStorage:  localStorage,
 		remoteStorage: remoteStorage,
@@ -118,7 +152,182 @@ func NewStore(nodeID string,
 	}
 	store.processInbound(4, 20*time.Second)
 	store.processOutbound(4, 10*time.Minute)
+	go func() {
+		time.Sleep(2 * time.Second)
+		var synced bool
+		for !synced {
+			synced = store.sync(10 * time.Minute)
+			time.Sleep(2 * time.Second)
+		}
+		if store.debug {
+			log.Println("[INFO] sync done")
+		}
+	}()
+	go func() {
+		listJournals := func() {
+			list, err := store.journals.ListAll()
+			if err != nil {
+				log.Println("[WARN] error listing journals", err)
+				return
+			}
+			log.Println("[INFO] node journals:")
+			log.Println(list)
+		}
+		for {
+			for !store.IsReady() {
+				time.Sleep(2 * time.Second)
+			}
+			if store.debug {
+				listJournals()
+			}
+			ts := time.Now()
+			_, err := store.journals.JoinAll(journal.ID(nodeID))
+			if err != nil {
+				log.Println("[WARN] journal consolidation failed:", err)
+			} else if store.debug {
+				log.Println("[INFO] consolidation done in", time.Since(ts))
+				listJournals()
+			}
+			time.Sleep(24 * time.Hour)
+		}
+	}()
 	return store, nil
+}
+
+func (o *objStore) sync(timeout time.Duration) bool {
+	nodes, err := o.cluster.ListNodes()
+	if err != nil {
+		closer.Fatalln("[WARN] list nodes failed, sync cancelled:", err)
+	} else if len(nodes) < 2 {
+		o.stateMux.Lock()
+		o.state = storeActiveState
+		o.stateMux.Unlock()
+		return false
+	}
+	o.stateMux.Lock()
+	o.state = storeInactiveState
+	o.stateMux.Unlock()
+
+	list, err := o.journals.ExportAll()
+	if err != nil {
+		closer.Fatalln("[WARN] list journals failed, sync cancelled:", err)
+	}
+
+	wg := new(sync.WaitGroup)
+	ctx, _ := context.WithTimeout(context.Background(), timeout)
+
+	var listAdded journal.FileMetaList
+	var listDeleted journal.FileMetaList
+
+	for _, node := range nodes {
+		if node.ID == o.nodeID {
+			continue
+		}
+		wg.Add(1)
+		go func(node *cluster.NodeInfo) {
+			defer wg.Done()
+
+			added, deleted, err := o.cluster.Sync(ctx, node.ID, list)
+			if err != nil {
+				log.Println("[WARN] sync error:", err)
+			} else {
+				listAdded = append(listAdded, added...)
+				listDeleted = append(listDeleted, deleted...)
+			}
+		}(node)
+	}
+	wg.Wait()
+
+	setAdded := make(map[string]*journal.FileMeta, len(listAdded))
+	setDeleted := make(map[string]*journal.FileMeta, len(listDeleted))
+
+	for _, meta := range listAdded {
+		if m, ok := setAdded[meta.ID]; ok {
+			if meta.Timestamp > m.Timestamp {
+				setAdded[meta.ID] = meta
+				continue
+			}
+		}
+		setAdded[meta.ID] = meta
+	}
+	for _, meta := range listDeleted {
+		if mAdd, ok := setAdded[meta.ID]; ok {
+			// added already, check priority by age
+			if mAdd.Timestamp > meta.Timestamp {
+				continue // skip this delete event
+			} else {
+				delete(setAdded, meta.ID)
+			}
+		}
+		if m, ok := setDeleted[meta.ID]; ok {
+			if meta.Timestamp > m.Timestamp {
+				setDeleted[meta.ID] = meta
+				continue
+			}
+		}
+		setDeleted[meta.ID] = meta
+	}
+
+	err = o.journals.Update(journal.ID(o.nodeID),
+		func(j journal.Journal, _ *journal.JournalMeta) error {
+			for _, meta := range setAdded {
+				if meta.IsDeleted {
+					// missing in our records, but marked as deleted elsewere
+					o.localStorage.Remove(meta.ID)
+					if err := j.Set(meta.ID, meta); err != nil {
+						log.Println("[WARN] journal set:", err)
+					}
+					continue
+				}
+				switch meta.Consistency {
+				case journal.ConsistencyLocal, journal.ConsistencyS3:
+					// stored elsewere
+					meta.IsSymlink = true
+					if err := j.Set(meta.ID, meta); err != nil {
+						log.Println("[WARN] journal set:", err)
+					}
+				case journal.ConsistencyFull:
+					// must replicate, i.e. handle the missing announce
+					meta.IsSymlink = true // temporarily, will be overriden once replicated
+					o.ReceiveEventAnnounce(&EventAnnounce{
+						Type:     cluster.EventFileAdded,
+						FileMeta: meta,
+					})
+					if err := j.Set(meta.ID, meta); err != nil {
+						log.Println("[WARN] journal set:", err)
+					}
+				}
+			}
+			return nil
+		})
+	if err != nil {
+		closer.Fatalln("[WARN] failed to sync journal:", err)
+	}
+
+	log.Println("added:", listAdded)
+	log.Println("deleted:", listDeleted)
+
+	o.stateMux.Lock()
+	o.state = storeActiveState
+	o.stateMux.Unlock()
+
+	for _, meta := range setDeleted {
+		if meta.IsDeleted {
+			// some nodes missing info we have on deleted object
+			o.EmitEventAnnounce(&EventAnnounce{
+				Type:     cluster.EventFileDeleted,
+				FileMeta: meta,
+			})
+			continue
+		}
+		// some nodes are missing our file
+		o.EmitEventAnnounce(&EventAnnounce{
+			Type:     cluster.EventFileAdded,
+			FileMeta: meta,
+		})
+	}
+
+	return true
 }
 
 func (o *objStore) processOutbound(workers int, emitTimeout time.Duration) {
@@ -147,6 +356,13 @@ func (o *objStore) processInbound(workers int, connTimeout time.Duration) {
 			}
 		}()
 	}
+}
+
+func (o *objStore) IsReady() bool {
+	o.stateMux.RLock()
+	ready := o.state == storeActiveState
+	o.stateMux.RUnlock()
+	return ready
 }
 
 func (o *objStore) Close() error {
@@ -207,7 +423,7 @@ func GenerateID() string {
 	return journal.PseudoUUID()
 }
 
-func checkUUID(id string) bool {
+func CheckUUID(id string) bool {
 	if len(id) == 0 {
 		return false
 	}
@@ -242,9 +458,9 @@ func (o *objStore) emitEvent(ev *EventAnnounce, timeout time.Duration) error {
 func (o *objStore) handleEvent(ev *EventAnnounce, timeout time.Duration) error {
 	switch ev.Type {
 	case cluster.EventFileAdded:
-		// TODO
+		log.Printf("ADDED ANN: %+v", ev)
 	case cluster.EventFileDeleted:
-
+		log.Printf("DELETED ANN: %+v", ev)
 	case cluster.EventOpaqueData:
 		log.Println("[INFO] cluster message:", string(ev.OpaqueData))
 	default:
@@ -262,6 +478,7 @@ func (o *objStore) DiskStats() (*DiskStats, error) {
 }
 
 type FileMeta journal.FileMeta
+type FileMetaList journal.FileMetaList
 
 func (o *objStore) HeadObject(id string) (*FileMeta, error) {
 	var meta *FileMeta
@@ -274,13 +491,6 @@ func (o *objStore) HeadObject(id string) (*FileMeta, error) {
 		return journal.ForEachStop
 	})
 	return meta, err
-}
-
-func (o *objStore) FetchObject(ctx context.Context, id string) (io.ReadCloser, *FileMeta, error) {
-	// spec, err := o.remoteStorage.GetObject(id)
-
-	// TODO: map to ReadCloser & meta
-	panic("not implemented")
 }
 
 func (o *objStore) GetObject(id string) (io.ReadCloser, *FileMeta, error) {
@@ -358,4 +568,98 @@ func (o *objStore) FindObject(ctx context.Context, id string) (io.ReadCloser, *F
 		return r, meta, nil
 	}
 	return nil, nil, ErrNotFound
+}
+
+func (o *objStore) FetchObject(ctx context.Context, id string) (io.ReadCloser, *FileMeta, error) {
+	// spec, err := o.remoteStorage.GetObject(id)
+
+	// TODO: map to ReadCloser & meta
+	panic("not implemented")
+}
+
+func (o *objStore) PutObject(ctx context.Context, r io.ReadCloser, meta *FileMeta) (int64, error) {
+	storeLocal := func(r io.Reader, meta *FileMeta) (written int64, err error) {
+		written, err = o.localStorage.Write(meta.ID, r)
+		if err != nil {
+			return
+		}
+		journalID := journal.ID(o.nodeID)
+		var journalOk bool
+		if err = o.journals.ForEachUpdate(
+			func(j journal.Journal, _ *journal.JournalMeta) error {
+				if journalID == j.ID() {
+					journalOk = true
+					return j.Set(meta.ID, (*journal.FileMeta)(meta))
+				}
+				return j.Delete(meta.ID)
+			}); err != nil {
+			return
+		}
+		if !journalOk {
+			err = fmt.Errorf("objstore: journal not found: %v", journalID)
+			return
+		}
+		return
+	}
+	storeS3 := func(r io.ReadSeeker, meta *FileMeta) error {
+		_, err := o.remoteStorage.UploadObject("", meta.ID, r)
+		return err
+	}
+
+	switch meta.Consistency {
+	case journal.ConsistencyLocal:
+		defer r.Close()
+		written, err := storeLocal(r, meta)
+		if err != nil {
+			err = fmt.Errorf("objstore: local store failed: %v", err)
+			return written, err
+		}
+		o.EmitEventAnnounce(&EventAnnounce{
+			Type:     cluster.EventFileAdded,
+			FileMeta: (*journal.FileMeta)(meta),
+		})
+	case journal.ConsistencyS3, journal.ConsistencyFull:
+		defer r.Close()
+		written, err := storeLocal(r, meta)
+		if err != nil {
+			err = fmt.Errorf("objstore: local store failed: %v", err)
+			return written, err
+		}
+		o.EmitEventAnnounce(&EventAnnounce{
+			Type:     cluster.EventFileAdded,
+			FileMeta: (*journal.FileMeta)(meta),
+		})
+		// for optimal S3 uploads we should provide io.ReadSeeker,
+		// this is why we store object as local file first, then upload to S3.
+		f, err := o.localStorage.Read(meta.ID)
+		if err != nil {
+			err = fmt.Errorf("objstore: local store missing file: %v", err)
+			return written, err
+		}
+		defer f.Close()
+		if err := storeS3(f, meta); err != nil {
+			err = fmt.Errorf("objstore: remote store failed: %v", err)
+			return written, err
+		}
+		return written, nil
+	default:
+		return 0, fmt.Errorf("objstore: unknown consistency %v", meta.Consistency)
+	}
+	return 0, nil
+}
+
+func (o *objStore) Diff(list FileMetaList) (added, deleted FileMetaList, err error) {
+	internal, err := o.journals.ExportAll()
+	if err != nil {
+		err := fmt.Errorf("objstore: failed to collect journals: %v", err)
+		return nil, nil, err
+	}
+	internalJournal := journal.MakeJournal("", internal)
+	externalJournal := journal.MakeJournal("", (journal.FileMetaList)(list))
+	add, del := externalJournal.Diff(internalJournal)
+	return (FileMetaList)(add), (FileMetaList)(del), nil
+}
+
+func (o *objStore) SetDebug(v bool) {
+	o.debug = v
 }
