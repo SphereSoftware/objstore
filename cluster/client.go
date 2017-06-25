@@ -1,6 +1,7 @@
 package cluster
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -89,16 +90,18 @@ var (
 	ForEachStop = RangeStop
 )
 
-func (p *PrivateClient) GET(nodeID, path string, body io.Reader) (*http.Response, error) {
+func (p *PrivateClient) GET(ctx context.Context, nodeID, path string, body io.Reader) (*http.Response, error) {
 	req, err := http.NewRequest("GET", nodeURI(nodeID)+path, nil)
+	req = req.WithContext(ctx)
 	if err != nil {
 		return nil, err
 	}
 	return p.cli.Do(req)
 }
 
-func (p *PrivateClient) POST(nodeID, path string, body io.Reader) (*http.Response, error) {
+func (p *PrivateClient) POST(ctx context.Context, nodeID, path string, body io.Reader) (*http.Response, error) {
 	req, err := http.NewRequest("POST", nodeURI(nodeID)+path, body)
+	req = req.WithContext(ctx)
 	if err != nil {
 		return nil, err
 	}

@@ -72,11 +72,7 @@ func (z *FileMeta) DecodeMsg(dc *msgp.Reader) (err error) {
 		}
 		switch msgp.UnsafeString(field) {
 		case "ID":
-			{
-				var zcmr string
-				zcmr, err = dc.ReadString()
-				z.ID = ID(zcmr)
-			}
+			z.ID, err = dc.ReadString()
 			if err != nil {
 				return
 			}
@@ -107,9 +103,9 @@ func (z *FileMeta) DecodeMsg(dc *msgp.Reader) (err error) {
 			}
 		case "Consistency":
 			{
-				var zajw int
-				zajw, err = dc.ReadInt()
-				z.Consistency = ConsistencyLevel(zajw)
+				var zcmr int
+				zcmr, err = dc.ReadInt()
+				z.Consistency = ConsistencyLevel(zcmr)
 			}
 			if err != nil {
 				return
@@ -132,7 +128,7 @@ func (z *FileMeta) EncodeMsg(en *msgp.Writer) (err error) {
 	if err != nil {
 		return err
 	}
-	err = en.WriteString(string(z.ID))
+	err = en.WriteString(z.ID)
 	if err != nil {
 		return
 	}
@@ -199,7 +195,7 @@ func (z *FileMeta) MarshalMsg(b []byte) (o []byte, err error) {
 	// map header, size 7
 	// string "ID"
 	o = append(o, 0x87, 0xa2, 0x49, 0x44)
-	o = msgp.AppendString(o, string(z.ID))
+	o = msgp.AppendString(o, z.ID)
 	// string "Name"
 	o = append(o, 0xa4, 0x4e, 0x61, 0x6d, 0x65)
 	o = msgp.AppendString(o, z.Name)
@@ -228,24 +224,20 @@ func (z *FileMeta) MarshalMsg(b []byte) (o []byte, err error) {
 func (z *FileMeta) UnmarshalMsg(bts []byte) (o []byte, err error) {
 	var field []byte
 	_ = field
-	var zwht uint32
-	zwht, bts, err = msgp.ReadMapHeaderBytes(bts)
+	var zajw uint32
+	zajw, bts, err = msgp.ReadMapHeaderBytes(bts)
 	if err != nil {
 		return
 	}
-	for zwht > 0 {
-		zwht--
+	for zajw > 0 {
+		zajw--
 		field, bts, err = msgp.ReadMapKeyZC(bts)
 		if err != nil {
 			return
 		}
 		switch msgp.UnsafeString(field) {
 		case "ID":
-			{
-				var zhct string
-				zhct, bts, err = msgp.ReadStringBytes(bts)
-				z.ID = ID(zhct)
-			}
+			z.ID, bts, err = msgp.ReadStringBytes(bts)
 			if err != nil {
 				return
 			}
@@ -276,9 +268,9 @@ func (z *FileMeta) UnmarshalMsg(bts []byte) (o []byte, err error) {
 			}
 		case "Consistency":
 			{
-				var zcua int
-				zcua, bts, err = msgp.ReadIntBytes(bts)
-				z.Consistency = ConsistencyLevel(zcua)
+				var zwht int
+				zwht, bts, err = msgp.ReadIntBytes(bts)
+				z.Consistency = ConsistencyLevel(zwht)
 			}
 			if err != nil {
 				return
@@ -296,16 +288,16 @@ func (z *FileMeta) UnmarshalMsg(bts []byte) (o []byte, err error) {
 
 // Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
 func (z *FileMeta) Msgsize() (s int) {
-	s = 1 + 3 + msgp.StringPrefixSize + len(string(z.ID)) + 5 + msgp.StringPrefixSize + len(z.Name) + 5 + msgp.Int64Size + 10 + msgp.Int64Size + 9 + msgp.GuessSize(z.UserMeta) + 10 + msgp.BoolSize + 12 + msgp.IntSize
+	s = 1 + 3 + msgp.StringPrefixSize + len(z.ID) + 5 + msgp.StringPrefixSize + len(z.Name) + 5 + msgp.Int64Size + 10 + msgp.Int64Size + 9 + msgp.GuessSize(z.UserMeta) + 10 + msgp.BoolSize + 12 + msgp.IntSize
 	return
 }
 
 // DecodeMsg implements msgp.Decodable
 func (z *ID) DecodeMsg(dc *msgp.Reader) (err error) {
 	{
-		var zxhx string
-		zxhx, err = dc.ReadString()
-		(*z) = ID(zxhx)
+		var zhct string
+		zhct, err = dc.ReadString()
+		(*z) = ID(zhct)
 	}
 	if err != nil {
 		return
@@ -332,9 +324,9 @@ func (z ID) MarshalMsg(b []byte) (o []byte, err error) {
 // UnmarshalMsg implements msgp.Unmarshaler
 func (z *ID) UnmarshalMsg(bts []byte) (o []byte, err error) {
 	{
-		var zlqf string
-		zlqf, bts, err = msgp.ReadStringBytes(bts)
-		(*z) = ID(zlqf)
+		var zcua string
+		zcua, bts, err = msgp.ReadStringBytes(bts)
+		(*z) = ID(zcua)
 	}
 	if err != nil {
 		return
@@ -353,13 +345,13 @@ func (z ID) Msgsize() (s int) {
 func (z *JournalMeta) DecodeMsg(dc *msgp.Reader) (err error) {
 	var field []byte
 	_ = field
-	var zdaf uint32
-	zdaf, err = dc.ReadMapHeader()
+	var zxhx uint32
+	zxhx, err = dc.ReadMapHeader()
 	if err != nil {
 		return
 	}
-	for zdaf > 0 {
-		zdaf--
+	for zxhx > 0 {
+		zxhx--
 		field, err = dc.ReadMapKeyPtr()
 		if err != nil {
 			return
@@ -367,9 +359,9 @@ func (z *JournalMeta) DecodeMsg(dc *msgp.Reader) (err error) {
 		switch msgp.UnsafeString(field) {
 		case "ID":
 			{
-				var zpks string
-				zpks, err = dc.ReadString()
-				z.ID = ID(zpks)
+				var zlqf string
+				zlqf, err = dc.ReadString()
+				z.ID = ID(zlqf)
 			}
 			if err != nil {
 				return
@@ -498,13 +490,13 @@ func (z *JournalMeta) MarshalMsg(b []byte) (o []byte, err error) {
 func (z *JournalMeta) UnmarshalMsg(bts []byte) (o []byte, err error) {
 	var field []byte
 	_ = field
-	var zjfb uint32
-	zjfb, bts, err = msgp.ReadMapHeaderBytes(bts)
+	var zdaf uint32
+	zdaf, bts, err = msgp.ReadMapHeaderBytes(bts)
 	if err != nil {
 		return
 	}
-	for zjfb > 0 {
-		zjfb--
+	for zdaf > 0 {
+		zdaf--
 		field, bts, err = msgp.ReadMapKeyZC(bts)
 		if err != nil {
 			return
@@ -512,9 +504,9 @@ func (z *JournalMeta) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		switch msgp.UnsafeString(field) {
 		case "ID":
 			{
-				var zcxo string
-				zcxo, bts, err = msgp.ReadStringBytes(bts)
-				z.ID = ID(zcxo)
+				var zpks string
+				zpks, bts, err = msgp.ReadStringBytes(bts)
+				z.ID = ID(zpks)
 			}
 			if err != nil {
 				return

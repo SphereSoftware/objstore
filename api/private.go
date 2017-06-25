@@ -3,10 +3,15 @@ package api
 import (
 	"errors"
 	"fmt"
+	"io"
+	"io/ioutil"
 	"log"
+	"mime"
 	"net"
 	"net/http"
 	"net/http/httputil"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -163,7 +168,8 @@ func (p *PrivateServer) RouteAPI(store objstore.Store) {
 	r.GET("/private/v1/ping", p.PingHandler())
 	r.GET("/private/v1/nodes", p.ListNodesHandler())
 	r.POST("/private/v1/announce", p.AnnounceHandler(store))
-	r.GET("/private/v1/get", p.GetHandler(store))
+	r.GET("/private/v1/get/:id", p.GetHandler(store))
+	r.POST("/private/v1/message", p.MessageHandler(store))
 	p.mux = r
 }
 
@@ -185,6 +191,7 @@ func (p *PrivateServer) ListNodesHandler() gin.HandlerFunc {
 			return nil
 		}); err != nil {
 			c.String(500, "error: %v", err)
+			return
 		}
 		c.JSON(200, nodes)
 	}
@@ -201,9 +208,46 @@ func (p *PrivateServer) AnnounceHandler(store objstore.Store) gin.HandlerFunc {
 	}
 }
 
+func (p *PrivateServer) MessageHandler(store objstore.Store) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		r := io.LimitReader(c.Request.Body, 8*1024) // 8kB limit
+		data, _ := ioutil.ReadAll(r)
+		c.Request.Body.Close()
+		store.EmitEventAnnounce(&objstore.EventAnnounce{
+			Type:       objstore.EventOpaqueData,
+			OpaqueData: data,
+		})
+		c.Status(200)
+	}
+}
+
 func (p *PrivateServer) GetHandler(store objstore.Store) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// TODO: implement fetch
-		c.Status(500)
+		r, meta, err := store.GetObject(c.Param("id"))
+		if err == objstore.ErrNotFound {
+			c.Status(404)
+			return
+		} else if err != nil {
+			c.String(500, "error: %v", err)
+			return
+		}
+		serveObject(c, r, meta)
 	}
+}
+
+func serveObject(c *gin.Context, r io.ReadCloser, meta *objstore.FileMeta) {
+	ts := time.Unix(meta.Timestamp, 0)
+	if seekable, ok := r.(io.ReadSeeker); ok {
+		http.ServeContent(c.Writer, c.Request, meta.Name, ts, seekable)
+		return
+	}
+	// actually do all the work http.ServeContent does, but without support
+	// of ranges and partial reads due to lack of io.Seeker interface.
+	if !ts.IsZero() {
+		c.Header("Last-Modified", ts.UTC().Format(http.TimeFormat))
+	}
+	ctype := mime.TypeByExtension(filepath.Ext(meta.Name))
+	c.Header("Content-Type", ctype)
+	c.Header("Content-Length", strconv.FormatInt(meta.Size, 10))
+	io.CopyN(c.Writer, r, meta.Size)
 }

@@ -2,14 +2,17 @@ package cluster
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"io/ioutil"
 )
 
 type ClusterManager interface {
 	ListNodes() ([]*NodeInfo, error)
-	Announce(nodeID string, event *EventAnnounce) error
+	Announce(ctx context.Context, nodeID string, event *EventAnnounce) error
+	GetObject(ctx context.Context, nodeID string, id string) (io.ReadCloser, error)
 }
 
 type NodeInfo struct {
@@ -45,9 +48,9 @@ func (c *clusterManager) ListNodes() ([]*NodeInfo, error) {
 	return nodes, nil
 }
 
-func (c *clusterManager) Announce(nodeID string, event *EventAnnounce) error {
+func (c *clusterManager) Announce(ctx context.Context, nodeID string, event *EventAnnounce) error {
 	body, _ := json.Marshal(event)
-	resp, err := c.cli.POST(nodeID, "/private/v1/announce", bytes.NewReader(body))
+	resp, err := c.cli.POST(ctx, nodeID, "/private/v1/announce", bytes.NewReader(body))
 	if err != nil {
 		return err
 	}
@@ -57,4 +60,22 @@ func (c *clusterManager) Announce(nodeID string, event *EventAnnounce) error {
 		return errors.New(string(respBody))
 	}
 	return nil
+}
+
+var ErrNotFound = errors.New("not found")
+
+func (c *clusterManager) GetObject(ctx context.Context, nodeID string, id string) (io.ReadCloser, error) {
+	resp, err := c.cli.GET(ctx, nodeID, "/private/v1/get/"+id, nil)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode == 404 {
+		resp.Body.Close()
+		return nil, ErrNotFound
+	} else if resp.StatusCode != 200 {
+		respBody, _ := ioutil.ReadAll(resp.Body)
+		resp.Body.Close()
+		return nil, errors.New(string(respBody))
+	}
+	return resp.Body, nil
 }

@@ -9,8 +9,6 @@ import (
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/s3"
-
-	"github.com/xlab/catcher"
 )
 
 // RemoteStorage provides object access backend,
@@ -53,17 +51,16 @@ func (s *s3Storage) Bucket() string {
 	return s.bucket
 }
 
-func (s *s3Storage) GetObject(key string, version ...string) (spec *Spec, err error) {
-	defer catcher.Catch(
-		catcher.RecvError(&err, true),
-	)
+func (s *s3Storage) GetObject(key string, version ...string) (*Spec, error) {
 	obj, err := s.cli.GetObject(&s3.GetObjectInput{
 		Key:       aws.String(key),
 		Bucket:    aws.String(s.bucket),
 		VersionId: awsStringMaybe(version),
 	})
-	orPanic(err)
-	spec = &Spec{
+	if err != nil {
+		return nil, err
+	}
+	spec := &Spec{
 		Path:      fullPath(s.bucket, key),
 		Key:       key,
 		Body:      obj.Body,
@@ -72,20 +69,19 @@ func (s *s3Storage) GetObject(key string, version ...string) (spec *Spec, err er
 		UpdatedAt: *obj.LastModified,
 		Size:      *obj.ContentLength,
 	}
-	return
+	return spec, nil
 }
 
-func (s *s3Storage) HeadObject(key string, version ...string) (spec *Spec, err error) {
-	defer catcher.Catch(
-		catcher.RecvError(&err, true),
-	)
+func (s *s3Storage) HeadObject(key string, version ...string) (*Spec, error) {
 	obj, err := s.cli.HeadObject(&s3.HeadObjectInput{
 		Key:       aws.String(key),
 		Bucket:    aws.String(s.bucket),
 		VersionId: awsStringMaybe(version),
 	})
-	orPanic(err)
-	spec = &Spec{
+	if err != nil {
+		return nil, err
+	}
+	spec := &Spec{
 		Path:      fullPath(s.bucket, key),
 		Key:       key,
 		ETag:      *obj.ETag,
@@ -93,14 +89,12 @@ func (s *s3Storage) HeadObject(key string, version ...string) (spec *Spec, err e
 		UpdatedAt: *obj.LastModified,
 		Size:      *obj.ContentLength,
 	}
-	return
+	return spec, nil
 }
 
-func (s *s3Storage) ListObjects(prefix string, startAfter ...string) (specs []*Spec, err error) {
+func (s *s3Storage) ListObjects(prefix string, startAfter ...string) ([]*Spec, error) {
 	var token *string
-	defer catcher.Catch(
-		catcher.RecvError(&err, true),
-	)
+	var specs []*Spec
 	for {
 		list, err := s.cli.ListObjectsV2(&s3.ListObjectsV2Input{
 			Bucket:     aws.String(s.bucket),
@@ -110,7 +104,9 @@ func (s *s3Storage) ListObjects(prefix string, startAfter ...string) (specs []*S
 			MaxKeys:           aws.Int64(100),
 			ContinuationToken: token,
 		})
-		orPanic(err) // breaks the loop too
+		if err != nil {
+			return nil, err
+		}
 		for _, obj := range list.Contents {
 			specs = append(specs, &Spec{
 				Path:      fullPath(s.bucket, *obj.Key),
@@ -127,43 +123,37 @@ func (s *s3Storage) ListObjects(prefix string, startAfter ...string) (specs []*S
 			return specs, nil
 		}
 	}
-	return
+	return specs, nil
 }
 
-func (s *s3Storage) CheckAccess(prefix string) (err error) {
-	defer catcher.Catch(
-		catcher.RecvError(&err, true),
-	)
-	tsBuf := []byte(time.Now().String())
-	if _, err = s.cli.PutObject(&s3.PutObjectInput{
-		Body:        newReadSeeker(tsBuf),
+func (s *s3Storage) CheckAccess(prefix string) error {
+	body := []byte(time.Now().UTC().String())
+	_, err := s.cli.PutObject(&s3.PutObjectInput{
+		Body:        newReadSeeker(body),
 		Bucket:      aws.String(s.bucket),
 		ContentType: aws.String("text/plain"),
 		Key:         aws.String(path.Join(prefix, "_objstore_touch")),
-	}); err != nil {
-		return
-	}
-	return
+	})
+	return err
 }
 
-func (s *s3Storage) UploadObject(prefix, name string, r io.ReadSeeker) (spec *Spec, err error) {
-	defer catcher.Catch(
-		catcher.RecvError(&err, true),
-	)
+func (s *s3Storage) UploadObject(prefix, name string, r io.ReadSeeker) (*Spec, error) {
 	key := path.Join(prefix, name)
 	obj, err := s.cli.PutObject(&s3.PutObjectInput{
 		Body:   r,
 		Bucket: aws.String(s.bucket),
 		Key:    aws.String(key),
 	})
-	orPanic(err)
-	spec = &Spec{
+	if err != nil {
+		return nil, err
+	}
+	spec := &Spec{
 		Path:    fullPath(s.bucket, key),
 		Key:     key,
 		ETag:    *obj.ETag,
 		Version: *obj.VersionId,
 	}
-	return
+	return spec, err
 }
 
 func fullPath(bucket, key string) string {
@@ -175,10 +165,4 @@ func awsStringMaybe(v []string) *string {
 		return aws.String(v[0])
 	}
 	return nil
-}
-
-func orPanic(err error) {
-	if err != nil {
-		panic(err)
-	}
 }

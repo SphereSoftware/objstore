@@ -2,10 +2,8 @@ package journal
 
 import "fmt"
 
-type ID string
-
 type FileMeta struct {
-	ID        ID          `msgp:"0" json:"file_id"  `
+	ID        string      `msgp:"0" json:"file_id"  `
 	Name      string      `msgp:"1" json:"file_name"`
 	Size      int64       `msgp:"2" json:"file_size"`
 	Timestamp int64       `msgp:"3" json:"timestamp"`
@@ -32,6 +30,8 @@ const (
 	ConsistencyFull ConsistencyLevel = 2
 )
 
+type ID string
+
 type JournalMeta struct {
 	ID         ID     `msgp:"0" json:"journal_id"`
 	CreatedAt  int64  `msgp:"1" json:"created_at"`
@@ -42,5 +42,11 @@ type JournalMeta struct {
 }
 
 func (j JournalMeta) String() string {
-	return fmt.Sprintf("%s: %s-%s (%d) joined: %v", j.ID, j.FirstKey, j.LastKey, j.CountTotal, j.JoinedAt > 0)
+	if len(j.FirstKey) == 0 {
+		j.FirstKey = "?"
+	}
+	if len(j.LastKey) == 0 {
+		j.LastKey = "?"
+	}
+	return fmt.Sprintf("%s: %s-%s (count: %d) joined: %v", j.ID, j.FirstKey, j.LastKey, j.CountTotal, j.JoinedAt > 0)
 }

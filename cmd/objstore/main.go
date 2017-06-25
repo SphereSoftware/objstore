@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sync"
 	"time"
 
 	"github.com/boltdb/bolt"
@@ -137,10 +138,16 @@ func runCmd(c *cli.Cmd) {
 		privateServer := api.NewPrivateServer(nodeID, *clusterName)
 		privateServer.SetDebug(debugEnabled)
 		privateClient := cluster.NewPrivateClient(privateServer.Router())
+		journalManager := journal.NewJournalManager(db)
+		closer.Bind(func() {
+			if err := journalManager.Close(); err != nil {
+				log.Println("[WARN] journal close:", err)
+			}
+		})
 		store, err := objstore.NewStore(nodeID,
 			storage.NewLocalStorage(*localPrefix),
 			storage.NewS3Storage(*s3Region, *s3Bucket),
-			journal.NewJournalManager(db),
+			journalManager,
 			cluster.NewClusterManager(privateClient, nodeID),
 		)
 		if err != nil {
@@ -150,6 +157,26 @@ func runCmd(c *cli.Cmd) {
 		if err := privateServer.ListenAndServe(*privateAddr); err != nil {
 			closer.Fatalln(err)
 		}
+
+		closer.Bind(func() {
+			if err := store.Close(); err != nil {
+				log.Println("[WARN]", err)
+			}
+			if debugEnabled {
+				log.Println("[INFO] waiting for queues")
+			}
+			wg := new(sync.WaitGroup)
+			wg.Add(2)
+			go func() {
+				defer wg.Done()
+				store.WaitInbound(2 * time.Minute)
+			}()
+			go func() {
+				defer wg.Done()
+				store.WaitOutbound(2 * time.Minute)
+			}()
+			wg.Wait()
+		})
 
 		if len(*clusterNodes) == 0 {
 			log.Println("[WARN] no additional cluster nodes specified, current node starts solo")
