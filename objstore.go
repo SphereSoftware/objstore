@@ -34,7 +34,7 @@ type Store interface {
 	GetObject(id string) (io.ReadCloser, *FileMeta, error)
 	// FindObject gets and object from any node, if not found then tries to acquire from
 	// the remote storage, e.g. Amazon S3.
-	FindObject(ctx context.Context, id string) (io.ReadCloser, *FileMeta, error)
+	FindObject(ctx context.Context, id string, fetch bool) (io.ReadCloser, *FileMeta, error)
 	// FetchObject retrieves an object from the remote storage, e.g. Amazon S3.
 	// This should be called only on a total cache miss, when file is not found
 	// on any node of the cluster.
@@ -332,6 +332,9 @@ func (o *objStore) sync(timeout time.Duration) bool {
 }
 
 func (o *objStore) processOutbound(workers int, emitTimeout time.Duration) {
+	for !o.IsReady() {
+		time.Sleep(100 * time.Millisecond)
+	}
 	for i := 0; i < workers; i++ {
 		o.outboundWg.Add(1)
 		go func() {
@@ -346,6 +349,9 @@ func (o *objStore) processOutbound(workers int, emitTimeout time.Duration) {
 }
 
 func (o *objStore) processInbound(workers int, timeout time.Duration) {
+	for !o.IsReady() {
+		time.Sleep(100 * time.Millisecond)
+	}
 	for i := 0; i < workers; i++ {
 		o.inboundWg.Add(1)
 		go func() {
@@ -645,7 +651,8 @@ func (o *objStore) GetObject(id string) (io.ReadCloser, *FileMeta, error) {
 	return f, meta, nil
 }
 
-func (o *objStore) FindObject(ctx context.Context, id string) (io.ReadCloser, *FileMeta, error) {
+func (o *objStore) FindObject(ctx context.Context,
+	id string, fetch bool) (io.ReadCloser, *FileMeta, error) {
 	r, meta, err := o.GetObject(id)
 	if err == nil {
 		// found locally
@@ -653,23 +660,24 @@ func (o *objStore) FindObject(ctx context.Context, id string) (io.ReadCloser, *F
 	} else if err != ErrNotFound {
 		log.Println("[WARN]", err)
 	}
-	if meta == nil {
+	if meta == nil && !fetch {
 		// completely not found -> file has been removed
 		return nil, nil, ErrNotFound
+	} else if meta != nil {
+		r, err = o.findOnCluster(ctx, id)
+		if err == nil {
+			return r, meta, err
+		} else if err != ErrNotFound {
+			log.Println("[WARN] error when finding object:", err)
+		}
+		if o.debug {
+			log.Println("[INFO] file not found on cluster:", id)
+		}
 	}
-	r, err = o.findOnCluster(ctx, id)
-	if err == nil {
-		return r, meta, err
-	} else if err != ErrNotFound {
-		log.Println("[WARN] error when finding object:", err)
-	}
-	if o.debug {
-		log.Println("[INFO] file not found on cluster:", id)
-	}
-	// object not found on cluster, fetch from remote store
+	//  fetch from remote store
 	r, meta, err = o.FetchObject(ctx, id)
 	if err == ErrNotFound {
-		return nil, meta, ErrNotFound
+		return nil, nil, ErrNotFound
 	}
 	// store it locally
 	meta.IsSymlink = false
@@ -702,7 +710,9 @@ func (o *objStore) FindObject(ctx context.Context, id string) (io.ReadCloser, *F
 		log.Println("[WARN] file not found on disk:", meta)
 		return nil, meta, ErrNotFound
 	}
-	return f, meta, nil
+	copyMeta := *meta
+	copyMeta.IsFetched = true
+	return f, &copyMeta, nil
 }
 
 func (o *objStore) FetchObject(ctx context.Context, id string) (io.ReadCloser, *FileMeta, error) {
@@ -716,7 +726,6 @@ func (o *objStore) FetchObject(ctx context.Context, id string) (io.ReadCloser, *
 	if spec.Size > 0 {
 		meta.Size = spec.Size
 	}
-	meta.IsFetched = true
 	return spec.Body, (*FileMeta)(meta), nil
 }
 

@@ -1,6 +1,8 @@
 package api
 
 import (
+	"strings"
+
 	"github.com/gin-gonic/gin"
 
 	"github.com/xlab/objstore"
@@ -104,7 +106,12 @@ func (p *PublicServer) StatsHandler(store objstore.Store) gin.HandlerFunc {
 
 func (p *PublicServer) GetHandler(store objstore.Store) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		r, meta, err := store.FindObject(c, c.Param("id"))
+		var fetch bool
+		fetchOption := c.Request.Header.Get("X-Meta-Fetch")
+		if strings.ToLower(fetchOption) == "true" || fetchOption == "1" {
+			fetch = true
+		}
+		r, meta, err := store.FindObject(c, c.Param("id"), fetch)
 		if err == objstore.ErrNotFound {
 			if meta != nil {
 				serveMeta(c, meta)

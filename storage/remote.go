@@ -67,10 +67,10 @@ func (s *s3Storage) GetObject(key string, version ...string) (*Spec, error) {
 		Path:      fullPath(s.bucket, key),
 		Key:       key,
 		Body:      obj.Body,
-		ETag:      *obj.ETag,
-		Version:   *obj.VersionId,
-		UpdatedAt: *obj.LastModified,
-		Size:      *obj.ContentLength,
+		ETag:      aws.StringValue(obj.ETag),
+		Version:   aws.StringValue(obj.VersionId),
+		UpdatedAt: aws.TimeValue(obj.LastModified),
+		Size:      aws.Int64Value(obj.ContentLength),
 		Meta:      aws.StringValueMap(obj.Metadata),
 	}
 	return spec, nil
@@ -88,10 +88,10 @@ func (s *s3Storage) HeadObject(key string, version ...string) (*Spec, error) {
 	spec := &Spec{
 		Path:      fullPath(s.bucket, key),
 		Key:       key,
-		ETag:      *obj.ETag,
-		Version:   *obj.VersionId,
-		UpdatedAt: *obj.LastModified,
-		Size:      *obj.ContentLength,
+		ETag:      aws.StringValue(obj.ETag),
+		Version:   aws.StringValue(obj.VersionId),
+		UpdatedAt: aws.TimeValue(obj.LastModified),
+		Size:      aws.Int64Value(obj.ContentLength),
 	}
 	return spec, nil
 }
@@ -112,12 +112,13 @@ func (s *s3Storage) ListObjects(prefix string, startAfter ...string) ([]*Spec, e
 			return nil, err
 		}
 		for _, obj := range list.Contents {
+			key := aws.StringValue(obj.Key)
 			specs = append(specs, &Spec{
-				Path:      fullPath(s.bucket, *obj.Key),
-				Key:       *obj.Key,
-				ETag:      *obj.ETag,
-				UpdatedAt: *obj.LastModified,
-				Size:      *obj.Size,
+				Path:      fullPath(s.bucket, key),
+				Key:       key,
+				ETag:      aws.StringValue(obj.ETag),
+				UpdatedAt: aws.TimeValue(obj.LastModified),
+				Size:      aws.Int64Value(obj.Size),
 			})
 		}
 		token = list.ContinuationToken
@@ -159,8 +160,8 @@ func (s *s3Storage) PutObject(key string, r io.ReadSeeker, meta map[string]strin
 	spec := &Spec{
 		Path:    fullPath(s.bucket, key),
 		Key:     key,
-		ETag:    *obj.ETag,
-		Version: *obj.VersionId,
+		ETag:    aws.StringValue(obj.ETag),
+		Version: aws.StringValue(obj.VersionId),
 		Meta:    meta,
 	}
 	return spec, err

@@ -34,25 +34,32 @@ func (f *FileMeta) Map() map[string]string {
 }
 
 func (f *FileMeta) Unmap(m map[string]string) {
-	f.ID = m["id"]
-	f.Name = m["name"]
-	f.Size, _ = strconv.ParseInt(m["size"], 10, 64)
-	f.Timestamp, _ = strconv.ParseInt(m["timestamp"], 10, 64)
-	level, _ := strconv.Atoi(m["consistency"])
-	if level == 0 {
-		// at least
-		f.Consistency = ConsistencyS3
-	} else {
-		f.Consistency = (ConsistencyLevel)(level)
-	}
-
 	userMeta := make(map[string]string, len(m))
 	for k, v := range m {
-		if !strings.HasPrefix(k, "usermeta-") {
-			continue
+		switch k = strings.ToLower(k); k {
+		case "id":
+			f.ID = v
+		case "name":
+			f.Name = v
+		case "size":
+			f.Size, _ = strconv.ParseInt(v, 10, 64)
+		case "timestamp":
+			f.Timestamp, _ = strconv.ParseInt(v, 10, 64)
+		case "consistency":
+			level, _ := strconv.Atoi(v)
+			if level == 0 {
+				// at least
+				f.Consistency = ConsistencyS3
+			} else {
+				f.Consistency = (ConsistencyLevel)(level)
+			}
+		default:
+			if !strings.HasPrefix(k, "usermeta-") {
+				continue
+			}
+			k = strings.TrimPrefix(k, "usermeta-")
+			userMeta[k] = v
 		}
-		k = strings.TrimPrefix(k, "usermeta-")
-		userMeta[k] = v
 	}
 	f.UserMeta = userMeta
 }

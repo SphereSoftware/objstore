@@ -43,7 +43,7 @@ func NewPrivateServer(nodeID string, tags ...string) *PrivateServer {
 }
 
 func (p *PrivateServer) SetDebug(enabled bool) {
-	p.debug = true
+	p.debug = enabled
 }
 
 func (p *PrivateServer) Env() []string {
