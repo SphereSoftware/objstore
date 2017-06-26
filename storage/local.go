@@ -14,7 +14,7 @@ type LocalStorage interface {
 	Prefix() string
 	Read(key string) (*os.File, error)
 	Stat(key string) (os.FileInfo, error)
-	Remove(ket string) error
+	Delete(key string) error
 	Write(key string, body io.Reader) (int64, error)
 	ListFiles(prefix string) ([]os.FileInfo, error)
 	CheckAccess(prefix string) error
@@ -43,7 +43,7 @@ func (l *localStorage) Stat(key string) (os.FileInfo, error) {
 	return os.Stat(filepath.Join(l.prefix, key))
 }
 
-func (l *localStorage) Remove(key string) error {
+func (l *localStorage) Delete(key string) error {
 	return os.Remove(filepath.Join(l.prefix, key))
 }
 

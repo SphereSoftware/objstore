@@ -3,7 +3,9 @@ package storage
 import (
 	"fmt"
 	"io"
+	"mime"
 	"path"
+	"path/filepath"
 	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
@@ -14,10 +16,10 @@ import (
 // RemoteStorage provides object access backend,
 // it's usually an AWS S3 client pointed to a specific bucket.
 type RemoteStorage interface {
+	PutObject(key string, r io.ReadSeeker, meta map[string]string) (*Spec, error)
 	GetObject(key string, version ...string) (*Spec, error)
 	HeadObject(key string, version ...string) (*Spec, error)
 	ListObjects(prefix string, startAfter ...string) ([]*Spec, error)
-	UploadObject(prefix, name string, r io.ReadSeeker) (spec *Spec, err error)
 	CheckAccess(prefix string) error
 	Bucket() string
 }
@@ -44,6 +46,7 @@ type Spec struct {
 	ETag      string
 	Version   string
 	UpdatedAt time.Time
+	Meta      map[string]string
 	Size      int64
 }
 
@@ -68,6 +71,7 @@ func (s *s3Storage) GetObject(key string, version ...string) (*Spec, error) {
 		Version:   *obj.VersionId,
 		UpdatedAt: *obj.LastModified,
 		Size:      *obj.ContentLength,
+		Meta:      aws.StringValueMap(obj.Metadata),
 	}
 	return spec, nil
 }
@@ -137,12 +141,17 @@ func (s *s3Storage) CheckAccess(prefix string) error {
 	return err
 }
 
-func (s *s3Storage) UploadObject(prefix, name string, r io.ReadSeeker) (*Spec, error) {
-	key := path.Join(prefix, name)
+func (s *s3Storage) PutObject(key string, r io.ReadSeeker, meta map[string]string) (*Spec, error) {
+	var ctype string
+	if len(meta["name"]) > 0 {
+		ctype = mime.TypeByExtension(filepath.Ext(meta["name"]))
+	}
 	obj, err := s.cli.PutObject(&s3.PutObjectInput{
-		Body:   r,
-		Bucket: aws.String(s.bucket),
-		Key:    aws.String(key),
+		Body:        r,
+		Bucket:      aws.String(s.bucket),
+		Key:         aws.String(key),
+		ContentType: aws.String(ctype),
+		Metadata:    aws.StringMap(meta),
 	})
 	if err != nil {
 		return nil, err
@@ -152,6 +161,7 @@ func (s *s3Storage) UploadObject(prefix, name string, r io.ReadSeeker) (*Spec, e
 		Key:     key,
 		ETag:    *obj.ETag,
 		Version: *obj.VersionId,
+		Meta:    meta,
 	}
 	return spec, err
 }

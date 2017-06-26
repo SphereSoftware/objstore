@@ -27,6 +27,7 @@ func (p *PublicServer) RouteAPI(store objstore.Store) {
 	r.GET("/api/v1/get/:id", p.GetHandler(store))
 	r.GET("/api/v1/meta/:id", p.MetaHandler(store))
 	r.POST("/api/v1/put", p.PutHandler(store))
+	r.POST("/api/v1/delete/:id", p.DeleteHandler(store))
 	r.GET("/api/v1/id", p.IDHandler())
 	r.GET("/api/v1/version", p.VersionHandler())
 	r.GET("/api/v1/ping", p.PingHandler())
@@ -105,6 +106,9 @@ func (p *PublicServer) GetHandler(store objstore.Store) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		r, meta, err := store.FindObject(c, c.Param("id"))
 		if err == objstore.ErrNotFound {
+			if meta != nil {
+				serveMeta(c, meta)
+			}
 			c.Status(404)
 			return
 		} else if err != nil {
@@ -119,6 +123,9 @@ func (p *PublicServer) MetaHandler(store objstore.Store) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		meta, err := store.HeadObject(c.Param("id"))
 		if err == objstore.ErrNotFound {
+			if meta != nil {
+				serveMeta(c, meta)
+			}
 			c.Status(404)
 			return
 		} else if err != nil {
@@ -132,5 +139,11 @@ func (p *PublicServer) MetaHandler(store objstore.Store) gin.HandlerFunc {
 func (p *PublicServer) PutHandler(store objstore.Store) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		putObject(c, store)
+	}
+}
+
+func (p *PublicServer) DeleteHandler(store objstore.Store) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		deleteObject(c, store)
 	}
 }

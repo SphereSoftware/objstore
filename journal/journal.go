@@ -22,7 +22,6 @@ type Journal interface {
 	Exists(k string) bool
 	Set(k string, m *FileMeta) error
 	Delete(k string) error
-	MarkDeleted(k string) (*FileMeta, error)
 	Diff(j Journal) (added FileMetaList, deleted FileMetaList)
 	Range(start string, limit int, fn func(k string, v *FileMeta) error) (string, error)
 	Join(target Journal, mapping Mapping) error
@@ -113,38 +112,6 @@ func (b *btreeJournal) Delete(k string) error {
 	b.t.Delete(k)
 	b.mux.Unlock()
 	return nil
-}
-
-func (b *btreeJournal) MarkDeleted(k string) (*FileMeta, error) {
-	if len(k) == 0 {
-		return nil, errors.New("journal: zero-length keys not allowed")
-	}
-	b.mux.Lock()
-	if b.closed {
-		b.mux.Unlock()
-		return nil, closedErr
-	}
-	var meta *FileMeta
-	oldV, written := b.t.Put(k, func(oldV interface{}, exists bool) (interface{}, bool) {
-		if !exists || oldV == nil {
-			return nil, false
-		}
-		meta := new(FileMeta)
-		meta.UnmarshalMsg(oldV.([]byte))
-		meta.IsDeleted = true
-		meta.Timestamp = time.Now().UnixNano()
-		meta.Size = 0
-		meta.UserMeta = nil
-		meta.Name = ""
-		newV, _ := meta.MarshalMsg(nil)
-		return newV, true
-	})
-	if written {
-		meta = new(FileMeta)
-		meta.UnmarshalMsg(oldV.([]byte))
-	}
-	b.mux.Unlock()
-	return meta, nil
 }
 
 var closedErr = errors.New("journal: closed already")
@@ -656,24 +623,6 @@ func (j *kvJournal) Set(k string, m *FileMeta) error {
 
 func (j *kvJournal) Delete(k string) error {
 	return j.b.Delete([]byte(k))
-}
-
-func (j *kvJournal) MarkDeleted(k string) (*FileMeta, error) {
-	data := j.b.Get([]byte(k))
-	if data == nil {
-		return nil, nil
-	}
-	meta := new(FileMeta)
-	meta.UnmarshalMsg(data)
-	oldMeta := *meta
-	meta.IsDeleted = true
-	meta.Timestamp = time.Now().UnixNano()
-	meta.Size = 0
-	meta.UserMeta = nil
-	meta.Name = ""
-	data, _ = meta.MarshalMsg(nil)
-	err := j.b.Put([]byte(k), data)
-	return &oldMeta, err
 }
 
 func (j *kvJournal) List() FileMetaList {

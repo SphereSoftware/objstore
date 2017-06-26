@@ -173,6 +173,7 @@ func (p *PrivateServer) RouteAPI(store objstore.Store) {
 	r.POST("/private/v1/message", p.MessageHandler(store))
 	r.POST("/private/v1/put", p.PutHandler(store))
 	r.POST("/private/v1/sync", p.SyncHandler(store))
+	r.POST("/private/v1/delete/:id", p.DeleteHandler(store))
 	p.mux = r
 }
 
@@ -238,7 +239,29 @@ func (p *PrivateServer) GetHandler(store objstore.Store) gin.HandlerFunc {
 	}
 }
 
+func serveMeta(c *gin.Context, meta *objstore.FileMeta) {
+	c.Header("X-Meta-ID", meta.ID)
+	if len(meta.Name) > 0 {
+		c.Header("X-Meta-Name", meta.Name)
+	}
+	if len(meta.UserMeta) > 0 {
+		user, _ := json.Marshal(meta.UserMeta)
+		c.Header("X-Meta-UserMeta", string(user))
+	}
+	c.Header("X-Meta-ConsistencyLevel", strconv.Itoa(int(meta.Consistency)))
+	if meta.IsSymlink {
+		c.Header("X-Meta-Symlink", "true")
+	}
+	if meta.IsFetched {
+		c.Header("X-Meta-Fetched", "true")
+	}
+	if meta.IsDeleted {
+		c.Header("X-Meta-Deleted", "true")
+	}
+}
+
 func serveObject(c *gin.Context, r io.ReadCloser, meta *objstore.FileMeta) {
+	serveMeta(c, meta)
 	ts := time.Unix(meta.Timestamp, 0)
 	if seekable, ok := r.(io.ReadSeeker); ok {
 		http.ServeContent(c.Writer, c.Request, meta.Name, ts, seekable)
@@ -262,11 +285,11 @@ func (p *PrivateServer) PutHandler(store objstore.Store) gin.HandlerFunc {
 }
 
 func putObject(c *gin.Context, store objstore.Store) {
-	userMeta := func(data string) interface{} {
+	userMeta := func(data string) map[string]string {
 		if len(data) == 0 {
 			return nil
 		}
-		var v interface{}
+		var v map[string]string
 		json.Unmarshal([]byte(data), &v)
 		return v
 	}
@@ -286,7 +309,7 @@ func putObject(c *gin.Context, store objstore.Store) {
 		c.String(400, "error: %v", err)
 		return
 	}
-	levelData := c.Request.Header.Get("X-Meta-Level")
+	levelData := c.Request.Header.Get("X-Meta-ConsistencyLevel")
 	if len(levelData) == 0 {
 		level, _ := (objstore.ConsistencyLevel)(0).Check()
 		meta.Consistency = level
@@ -299,7 +322,7 @@ func putObject(c *gin.Context, store objstore.Store) {
 		}
 		meta.Consistency = level
 	}
-	if _, err := store.PutObject(c, c.Request.Body, meta); err != nil {
+	if _, err := store.PutObject(c.Request.Body, meta); err != nil {
 		c.String(400, "error: %v", err)
 		return
 	}
@@ -326,5 +349,26 @@ func (p *PrivateServer) SyncHandler(store objstore.Store) gin.HandlerFunc {
 			Added:   added,
 			Deleted: deleted,
 		})
+	}
+}
+
+func deleteObject(c *gin.Context, store objstore.Store) {
+	meta, err := store.DeleteObject(c.Param("id"))
+	if err == objstore.ErrNotFound {
+		c.Status(404)
+		return
+	} else if err != nil {
+		c.String(500, "error: %v", err)
+		return
+	}
+	if meta != nil {
+		serveMeta(c, meta)
+	}
+	c.Status(200)
+}
+
+func (p *PrivateServer) DeleteHandler(store objstore.Store) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		deleteObject(c, store)
 	}
 }

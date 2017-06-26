@@ -2,18 +2,59 @@ package journal
 
 import (
 	"fmt"
+	"strconv"
+	"strings"
 	"time"
 )
 
 type FileMeta struct {
-	ID          string           `msgp:"0" json:"file_id"  `
-	Name        string           `msgp:"1" json:"file_name"`
-	Size        int64            `msgp:"2" json:"file_size"`
-	Timestamp   int64            `msgp:"3" json:"timestamp"`
-	UserMeta    interface{}      `msgp:"4" json:"user_meta"`
-	IsSymlink   bool             `msgp:"5" json:"is_symlink"`
-	Consistency ConsistencyLevel `msgp:"6" json:"consistency"`
-	IsDeleted   bool             `msgp:"7" json:"is_deleted"`
+	ID          string            `msgp:"0" json:"id"`
+	Name        string            `msgp:"1" json:"name"`
+	Size        int64             `msgp:"2" json:"size"`
+	Timestamp   int64             `msgp:"3" json:"timestamp"`
+	UserMeta    map[string]string `msgp:"4" json:"user_meta"`
+	IsSymlink   bool              `msgp:"5" json:"is_symlink"`
+	Consistency ConsistencyLevel  `msgp:"6" json:"consistency"`
+	IsDeleted   bool              `msgp:"7" json:"is_deleted"`
+	IsFetched   bool              `msgp:"8" json:"is_fetched"`
+}
+
+func (f *FileMeta) Map() map[string]string {
+	m := map[string]string{
+		"id":          f.ID,
+		"name":        f.Name,
+		"size":        strconv.FormatInt(f.Size, 10),
+		"timestamp":   strconv.FormatInt(f.Timestamp, 10),
+		"consistency": strconv.Itoa(int(f.Consistency)),
+	}
+	for k, v := range f.UserMeta {
+		m["usermeta-"+k] = v
+	}
+	return m
+}
+
+func (f *FileMeta) Unmap(m map[string]string) {
+	f.ID = m["id"]
+	f.Name = m["name"]
+	f.Size, _ = strconv.ParseInt(m["size"], 10, 64)
+	f.Timestamp, _ = strconv.ParseInt(m["timestamp"], 10, 64)
+	level, _ := strconv.Atoi(m["consistency"])
+	if level == 0 {
+		// at least
+		f.Consistency = ConsistencyS3
+	} else {
+		f.Consistency = (ConsistencyLevel)(level)
+	}
+
+	userMeta := make(map[string]string, len(m))
+	for k, v := range m {
+		if !strings.HasPrefix(k, "usermeta-") {
+			continue
+		}
+		k = strings.TrimPrefix(k, "usermeta-")
+		userMeta[k] = v
+	}
+	f.UserMeta = userMeta
 }
 
 type FileMetaList []*FileMeta

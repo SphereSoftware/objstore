@@ -24,8 +24,6 @@ func NewPrivateClient(router astranet.AstraNet) *PrivateClient {
 	return &PrivateClient{
 		router: router,
 		cli: &http.Client{
-			// TODO: study timeouts for private APIs
-			// Timeout:  time.Minute,
 			Transport: newHTTPTransport(router),
 		},
 	}

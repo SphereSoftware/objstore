@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"strconv"
 	"sync"
 	"time"
 
@@ -31,17 +32,19 @@ type Store interface {
 	// GetObject gets an object from the local storage of the node.
 	// Used for private API, when other nodes ask for an object.
 	GetObject(id string) (io.ReadCloser, *FileMeta, error)
-	// FindObject gets and object from any node.
-	// Used for public API, when file should be found somewhere.
-	// Calls GetObject on all other nodes in parallel.
+	// FindObject gets and object from any node, if not found then tries to acquire from
+	// the remote storage, e.g. Amazon S3.
 	FindObject(ctx context.Context, id string) (io.ReadCloser, *FileMeta, error)
-	// FetchObject retrieves an object from remote storage, e.g. Amazon S3.
+	// FetchObject retrieves an object from the remote storage, e.g. Amazon S3.
 	// This should be called only on a total cache miss, when file is not found
 	// on any node of the cluster.
 	FetchObject(ctx context.Context, id string) (io.ReadCloser, *FileMeta, error)
 	// PutObject writes object to the local storage, emits cluster announcements, optionally
 	// writes object to remote storage, e.g. Amazon S3. Returns amount of bytes written.
-	PutObject(ctx context.Context, r io.ReadCloser, meta *FileMeta) (int64, error)
+	PutObject(r io.ReadCloser, meta *FileMeta) (int64, error)
+	// DeleteObject marks object as deleted in journals and deletes it from the local storage.
+	// This operation does not delete object from remote storage.
+	DeleteObject(id string) (*FileMeta, error)
 	// Diff finds the difference between serialized exernal journal represented as list,
 	// and journals currently available on this local node.
 	Diff(list FileMetaList) (added, deleted FileMetaList, err error)
@@ -150,7 +153,7 @@ func NewStore(nodeID string,
 		inboundPump:      pumpEventAnnounces(inboundAnnounces),
 		inboundAnnounces: inboundAnnounces,
 	}
-	store.processInbound(4, 20*time.Second)
+	store.processInbound(4, 10*time.Minute)
 	store.processOutbound(4, 10*time.Minute)
 	go func() {
 		time.Sleep(2 * time.Second)
@@ -273,7 +276,8 @@ func (o *objStore) sync(timeout time.Duration) bool {
 			for _, meta := range setAdded {
 				if meta.IsDeleted {
 					// missing in our records, but marked as deleted elsewere
-					o.localStorage.Remove(meta.ID)
+					o.localStorage.Delete(meta.ID)
+					meta.IsSymlink = true
 					if err := j.Set(meta.ID, meta); err != nil {
 						log.Println("[WARN] journal set:", err)
 					}
@@ -303,9 +307,6 @@ func (o *objStore) sync(timeout time.Duration) bool {
 	if err != nil {
 		closer.Fatalln("[WARN] failed to sync journal:", err)
 	}
-
-	log.Println("added:", listAdded)
-	log.Println("deleted:", listDeleted)
 
 	o.stateMux.Lock()
 	o.state = storeActiveState
@@ -344,13 +345,13 @@ func (o *objStore) processOutbound(workers int, emitTimeout time.Duration) {
 	}
 }
 
-func (o *objStore) processInbound(workers int, connTimeout time.Duration) {
+func (o *objStore) processInbound(workers int, timeout time.Duration) {
 	for i := 0; i < workers; i++ {
 		o.inboundWg.Add(1)
 		go func() {
 			defer o.inboundWg.Done()
 			for ev := range o.inboundAnnounces {
-				if err := o.handleEvent(ev, connTimeout); err != nil {
+				if err := o.handleEvent(ev, timeout); err != nil {
 					log.Println("[WARN] handling event:", err)
 				}
 			}
@@ -424,10 +425,25 @@ func GenerateID() string {
 }
 
 func CheckUUID(id string) bool {
-	if len(id) == 0 {
+	// check 1: length 32 bytes
+	if len(id) != 32 {
 		return false
 	}
-	// TODO: more checks
+	// check 2: first 18 is numeric
+	for _, r := range id[:18] {
+		if r >= '0' && r <= '9' {
+			continue
+		}
+		return false
+	}
+	// check 3: timestamp must be current
+	n, _ := strconv.ParseInt("1"+id[:18], 10, 64)
+	ts := time.Unix(0, n)
+	if ts.Before(time.Date(2017, 0, 0, 0, 0, 0, 0, time.UTC)) ||
+		ts.After(time.Date(2100, 0, 0, 0, 0, 0, 0, time.UTC)) {
+		log.Println("[WARN] ID has timestamp:", ts, "which is not current")
+		return false
+	}
 	return true
 }
 
@@ -455,91 +471,14 @@ func (o *objStore) emitEvent(ev *EventAnnounce, timeout time.Duration) error {
 	return nil
 }
 
-func (o *objStore) handleEvent(ev *EventAnnounce, timeout time.Duration) error {
-	switch ev.Type {
-	case cluster.EventFileAdded:
-		log.Printf("ADDED ANN: %+v", ev)
-	case cluster.EventFileDeleted:
-		log.Printf("DELETED ANN: %+v", ev)
-	case cluster.EventOpaqueData:
-		log.Println("[INFO] cluster message:", string(ev.OpaqueData))
-	default:
-		log.Println("[WARN] skipping illegal cluster event type", ev.Type)
-	}
-	return nil
-}
-
-func (o *objStore) DiskStats() (*DiskStats, error) {
-	ds, err := o.localStorage.DiskStats()
-	if err != nil {
-		return nil, err
-	}
-	return (*DiskStats)(ds), nil
-}
-
-type FileMeta journal.FileMeta
-type FileMetaList journal.FileMetaList
-
-func (o *objStore) HeadObject(id string) (*FileMeta, error) {
-	var meta *FileMeta
-	err := o.journals.ForEach(func(j journal.Journal, _ *journal.JournalMeta) error {
-		if m := j.Get(id); m == nil {
-			return nil
-		} else {
-			meta = (*FileMeta)(m)
-		}
-		return journal.ForEachStop
-	})
-	return meta, err
-}
-
-func (o *objStore) GetObject(id string) (io.ReadCloser, *FileMeta, error) {
-	var meta *FileMeta
-	err := o.journals.ForEach(func(j journal.Journal, _ *journal.JournalMeta) error {
-		if m := j.Get(id); m == nil {
-			return nil
-		} else {
-			meta = (*FileMeta)(m)
-		}
-		return journal.ForEachStop
-	})
-	if err != nil {
-		return nil, nil, err
-	} else if meta == nil {
-		return nil, nil, ErrNotFound
-	}
-	if meta.IsSymlink {
-		// file should be located somewhere else, we don't have that file
-		return nil, meta, ErrNotFound
-	}
-	f, err := o.localStorage.Read(id)
-	if err != nil {
-		log.Println("[WARN] file not found on disk:", (*journal.FileMeta)(meta).String())
-		return nil, meta, ErrNotFound
-	}
-	return f, meta, nil
-}
-
-func (o *objStore) FindObject(ctx context.Context, id string) (io.ReadCloser, *FileMeta, error) {
-	r, meta, err := o.GetObject(id)
-	if err == nil {
-		// found locally
-		return r, meta, nil
-	} else if err != ErrNotFound {
-		log.Println("[WARN]", err)
-	}
-	if meta == nil {
-		// completely not found -> file been removed
-		return nil, nil, ErrNotFound
-	}
-
+func (o *objStore) findOnCluster(ctx context.Context, id string) (io.ReadCloser, error) {
 	nodes, err := o.cluster.ListNodes()
 	if err != nil {
 		err = fmt.Errorf("objstore: cannot discover nodes: %v", err)
-		return nil, nil, err
+		return nil, err
 	} else if len(nodes) < 2 {
 		// no other nodes except us..
-		return nil, nil, ErrNotFound
+		return nil, ErrNotFound
 	}
 	found := make(chan io.ReadCloser, len(nodes))
 	wg := new(sync.WaitGroup)
@@ -565,66 +504,268 @@ func (o *objStore) FindObject(ctx context.Context, id string) (io.ReadCloser, *F
 	// found will be closed if all workers done,
 	// or we get at least 1 result from the channel.
 	if r, ok := <-found; ok {
-		return r, meta, nil
+		return r, nil
 	}
-	return nil, nil, ErrNotFound
+	return nil, ErrNotFound
+}
+
+func (o *objStore) handleEvent(ev *EventAnnounce, timeout time.Duration) error {
+	switch ev.Type {
+	case cluster.EventFileAdded:
+		if ev.FileMeta == nil {
+			log.Println("[WARN] skipping added event with no meta")
+			return nil
+		}
+		id := ev.FileMeta.ID
+		meta := (*FileMeta)(ev.FileMeta)
+		if meta.Consistency == journal.ConsistencyFull {
+			// need to replicate the file locally
+			ctx, _ := context.WithTimeout(context.Background(), timeout)
+			r, err := o.findOnCluster(ctx, id)
+			if err == ErrNotFound {
+				if o.debug {
+					log.Println("[INFO] file not found on cluster:", ev.FileMeta)
+				}
+				// object not found on cluster, fetch from remote store
+				r, meta, err = o.FetchObject(ctx, id)
+				if err == ErrNotFound {
+					// we simply bail out if the file is expected with full consistency but not
+					// found on the cluster and the remote storage.
+					log.Println("[WARN] unable to find object for:", ev.FileMeta)
+					return nil
+				}
+				meta.Consistency = journal.ConsistencyFull
+			}
+			meta.IsSymlink = false
+			if _, err := o.storeLocal(r, meta); err != nil {
+				r.Close()
+				log.Println("[WARN] failed to fetch and store object:", err)
+				return nil
+			}
+			r.Close()
+		} else {
+			meta.IsSymlink = true
+		}
+		if err := o.journals.ForEachUpdate(func(j journal.Journal, _ *journal.JournalMeta) error {
+			if j.ID() == journal.ID(o.nodeID) {
+				return j.Set(id, (*journal.FileMeta)(meta))
+			}
+			return j.Delete(id)
+		}); err != nil {
+			return err
+		}
+	case cluster.EventFileDeleted:
+		if ev.FileMeta == nil {
+			log.Println("[WARN] skipping deleted event with no meta")
+			return nil
+		}
+		var found bool
+		id := ev.FileMeta.ID
+		err := o.journals.ForEachUpdate(func(j journal.Journal, _ *journal.JournalMeta) error {
+			if m := j.Get(id); m != nil {
+				found = true
+				m.IsDeleted = true
+				m.Timestamp = time.Now().UnixNano()
+				if err := j.Set(id, m); err != nil {
+					return err
+				}
+				return journal.ForEachStop
+			}
+			return nil
+		})
+		if err != nil {
+			err = fmt.Errorf("objstore: journal update failed: %v", err)
+			return err
+		} else if found {
+			if err := o.localStorage.Delete(id); err != nil {
+				log.Println("[WARN] failed to delete local file:", err)
+			}
+		}
+	case cluster.EventOpaqueData:
+		log.Println("[INFO] cluster message:", string(ev.OpaqueData))
+	default:
+		log.Println("[WARN] skipping illegal cluster event type", ev.Type)
+	}
+	return nil
+}
+
+func (o *objStore) DiskStats() (*DiskStats, error) {
+	ds, err := o.localStorage.DiskStats()
+	if err != nil {
+		return nil, err
+	}
+	return (*DiskStats)(ds), nil
+}
+
+type FileMeta journal.FileMeta
+type FileMetaList journal.FileMetaList
+
+func (o *objStore) HeadObject(id string) (*FileMeta, error) {
+	var meta *FileMeta
+	err := o.journals.ForEach(func(j journal.Journal, _ *journal.JournalMeta) error {
+		if m := j.Get(id); m != nil {
+			meta = (*FileMeta)(m)
+			return journal.ForEachStop
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	} else if meta == nil {
+		return nil, ErrNotFound
+	}
+	return meta, nil
+}
+
+func (o *objStore) GetObject(id string) (io.ReadCloser, *FileMeta, error) {
+	var meta *FileMeta
+	err := o.journals.ForEach(func(j journal.Journal, _ *journal.JournalMeta) error {
+		if m := j.Get(id); m != nil {
+			meta = (*FileMeta)(m)
+			return journal.ForEachStop
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, nil, err
+	} else if meta == nil {
+		return nil, nil, ErrNotFound
+	}
+	if meta.IsSymlink {
+		// file should be located somewhere else, we don't have that file
+		return nil, meta, ErrNotFound
+	} else if meta.IsDeleted {
+		return nil, meta, ErrNotFound
+	}
+	f, err := o.localStorage.Read(id)
+	if err != nil {
+		log.Println("[WARN] file not found on disk:", (*journal.FileMeta)(meta).String())
+		return nil, meta, ErrNotFound
+	}
+	return f, meta, nil
+}
+
+func (o *objStore) FindObject(ctx context.Context, id string) (io.ReadCloser, *FileMeta, error) {
+	r, meta, err := o.GetObject(id)
+	if err == nil {
+		// found locally
+		return r, meta, nil
+	} else if err != ErrNotFound {
+		log.Println("[WARN]", err)
+	}
+	if meta == nil {
+		// completely not found -> file has been removed
+		return nil, nil, ErrNotFound
+	}
+	r, err = o.findOnCluster(ctx, id)
+	if err == nil {
+		return r, meta, err
+	} else if err != ErrNotFound {
+		log.Println("[WARN] error when finding object:", err)
+	}
+	if o.debug {
+		log.Println("[INFO] file not found on cluster:", id)
+	}
+	// object not found on cluster, fetch from remote store
+	r, meta, err = o.FetchObject(ctx, id)
+	if err == ErrNotFound {
+		return nil, meta, ErrNotFound
+	}
+	// store it locally
+	meta.IsSymlink = false
+	if (meta.Consistency) == 0 {
+		meta.Consistency = journal.ConsistencyS3
+	}
+	meta.Timestamp = time.Now().UnixNano()
+	if _, err := o.storeLocal(r, meta); err != nil {
+		r.Close()
+		log.Println("[WARN] failed to fetch and store object:", err)
+		return nil, meta, err
+	}
+	r.Close()
+	// update journals
+	if err := o.journals.ForEachUpdate(func(j journal.Journal, _ *journal.JournalMeta) error {
+		if j.ID() == journal.ID(o.nodeID) {
+			return j.Set(id, (*journal.FileMeta)(meta))
+		}
+		return j.Delete(id)
+	}); err != nil {
+		return nil, meta, err
+	}
+	o.EmitEventAnnounce(&EventAnnounce{
+		Type:     cluster.EventFileAdded,
+		FileMeta: (*journal.FileMeta)(meta),
+	})
+	// serve from local storage
+	f, err := o.localStorage.Read(id)
+	if err != nil {
+		log.Println("[WARN] file not found on disk:", meta)
+		return nil, meta, ErrNotFound
+	}
+	return f, meta, nil
 }
 
 func (o *objStore) FetchObject(ctx context.Context, id string) (io.ReadCloser, *FileMeta, error) {
-	// spec, err := o.remoteStorage.GetObject(id)
-
-	// TODO: map to ReadCloser & meta
-	panic("not implemented")
+	spec, err := o.remoteStorage.GetObject(id)
+	if err != nil {
+		return nil, nil, err
+	}
+	meta := new(journal.FileMeta)
+	meta.Unmap(spec.Meta)
+	meta.ID = id
+	if spec.Size > 0 {
+		meta.Size = spec.Size
+	}
+	meta.IsFetched = true
+	return spec.Body, (*FileMeta)(meta), nil
 }
 
-func (o *objStore) PutObject(ctx context.Context, r io.ReadCloser, meta *FileMeta) (int64, error) {
-	storeLocal := func(r io.Reader, meta *FileMeta) (written int64, err error) {
-		written, err = o.localStorage.Write(meta.ID, r)
-		if err != nil {
-			return
-		}
-		journalID := journal.ID(o.nodeID)
-		var journalOk bool
-		if err = o.journals.ForEachUpdate(
-			func(j journal.Journal, _ *journal.JournalMeta) error {
-				if journalID == j.ID() {
-					journalOk = true
-					return j.Set(meta.ID, (*journal.FileMeta)(meta))
-				}
-				return j.Delete(meta.ID)
-			}); err != nil {
-			return
-		}
-		if !journalOk {
-			err = fmt.Errorf("objstore: journal not found: %v", journalID)
-			return
-		}
+func (o *objStore) storeLocal(r io.Reader, meta *FileMeta) (written int64, err error) {
+	written, err = o.localStorage.Write(meta.ID, r)
+	if err != nil {
 		return
 	}
-	storeS3 := func(r io.ReadSeeker, meta *FileMeta) error {
-		_, err := o.remoteStorage.UploadObject("", meta.ID, r)
-		return err
+	journalID := journal.ID(o.nodeID)
+	var journalOk bool
+	if err = o.journals.ForEachUpdate(
+		func(j journal.Journal, _ *journal.JournalMeta) error {
+			if journalID == j.ID() {
+				journalOk = true
+				return j.Set(meta.ID, (*journal.FileMeta)(meta))
+			}
+			return j.Delete(meta.ID)
+		}); err != nil {
+		return
 	}
+	if !journalOk {
+		err = fmt.Errorf("objstore: journal not found: %v", journalID)
+		return
+	}
+	return
+}
 
+func (o *objStore) PutObject(r io.ReadCloser, meta *FileMeta) (int64, error) {
 	switch meta.Consistency {
 	case journal.ConsistencyLocal:
-		defer r.Close()
-		written, err := storeLocal(r, meta)
+		written, err := o.storeLocal(r, meta)
 		if err != nil {
+			r.Close()
 			err = fmt.Errorf("objstore: local store failed: %v", err)
 			return written, err
 		}
+		r.Close()
 		o.EmitEventAnnounce(&EventAnnounce{
 			Type:     cluster.EventFileAdded,
 			FileMeta: (*journal.FileMeta)(meta),
 		})
 	case journal.ConsistencyS3, journal.ConsistencyFull:
-		defer r.Close()
-		written, err := storeLocal(r, meta)
+		written, err := o.storeLocal(r, meta)
 		if err != nil {
+			r.Close()
 			err = fmt.Errorf("objstore: local store failed: %v", err)
 			return written, err
 		}
+		r.Close()
 		o.EmitEventAnnounce(&EventAnnounce{
 			Type:     cluster.EventFileAdded,
 			FileMeta: (*journal.FileMeta)(meta),
@@ -637,7 +778,8 @@ func (o *objStore) PutObject(ctx context.Context, r io.ReadCloser, meta *FileMet
 			return written, err
 		}
 		defer f.Close()
-		if err := storeS3(f, meta); err != nil {
+
+		if _, err = o.remoteStorage.PutObject(meta.ID, f, (*journal.FileMeta)(meta).Map()); err != nil {
 			err = fmt.Errorf("objstore: remote store failed: %v", err)
 			return written, err
 		}
@@ -646,6 +788,35 @@ func (o *objStore) PutObject(ctx context.Context, r io.ReadCloser, meta *FileMet
 		return 0, fmt.Errorf("objstore: unknown consistency %v", meta.Consistency)
 	}
 	return 0, nil
+}
+
+func (o *objStore) DeleteObject(id string) (*FileMeta, error) {
+	var meta *FileMeta
+	err := o.journals.ForEachUpdate(func(j journal.Journal, _ *journal.JournalMeta) error {
+		if m := j.Get(id); m != nil {
+			m.IsDeleted = true
+			m.Timestamp = time.Now().UnixNano()
+			if err := j.Set(id, m); err != nil {
+				return err
+			}
+			meta = (*FileMeta)(m)
+			return journal.ForEachStop
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	} else if meta == nil {
+		return nil, ErrNotFound
+	}
+	o.EmitEventAnnounce(&EventAnnounce{
+		Type:     cluster.EventFileDeleted,
+		FileMeta: (*journal.FileMeta)(meta),
+	})
+	if err := o.localStorage.Delete(id); err != nil {
+		log.Println("[WARN] failed to delete local file:", err)
+	}
+	return meta, nil
 }
 
 func (o *objStore) Diff(list FileMetaList) (added, deleted FileMetaList, err error) {
