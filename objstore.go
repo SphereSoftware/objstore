@@ -11,9 +11,10 @@ import (
 	"time"
 
 	"github.com/xlab/closer"
-	"github.com/xlab/objstore/cluster"
-	"github.com/xlab/objstore/journal"
-	"github.com/xlab/objstore/storage"
+
+	"sphere.software/objstore/cluster"
+	"sphere.software/objstore/journal"
+	"sphere.software/objstore/storage"
 )
 
 type Store interface {

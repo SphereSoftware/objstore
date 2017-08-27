@@ -1,0 +1,109 @@
+hash: 28a225e35b84f3f5622752670370bc445bbd0433d9f42becbe950692dc71e5d0
+updated: 2017-06-27T02:04:20.072817794+03:00
+imports:
+- name: github.com/astranet/astranet
+  version: ededf87e9f24d6482bf900c46bcf57e52cb73cee
+  subpackages:
+  - addr
+  - glog
+  - listener
+  - protocol
+  - route
+  - service
+  - skykiss
+  - socket
+  - transport
+- name: github.com/astranet/btree-2d
+  version: 4b00686449f2c5e8cea67a72e64db87b5244b1af
+  subpackages:
+  - lockie
+  - util
+  - uuid
+- name: github.com/aws/aws-sdk-go
+  version: 72e42b13da62269f68308fb6068b7ea691a416a4
+  subpackages:
+  - aws
+  - aws/awserr
+  - aws/awsutil
+  - aws/client
+  - aws/client/metadata
+  - aws/corehandlers
+  - aws/credentials
+  - aws/credentials/ec2rolecreds
+  - aws/credentials/endpointcreds
+  - aws/credentials/stscreds
+  - aws/defaults
+  - aws/ec2metadata
+  - aws/endpoints
+  - aws/request
+  - aws/session
+  - aws/signer/v4
+  - internal/shareddefaults
+  - private/protocol
+  - private/protocol/query
+  - private/protocol/query/queryutil
+  - private/protocol/rest
+  - private/protocol/restxml
+  - private/protocol/xml/xmlutil
+  - service/s3
+  - service/sts
+- name: github.com/boltdb/bolt
+  version: 583e8937c61f1af6513608ccc75c97b6abdf4ff9
+- name: github.com/cenk/backoff
+  version: cdf48bbc1eb78d1349cbda326a4a037f7ba565c6
+- name: github.com/cznic/b
+  version: 6955404bf550e1eae1bf83121739078b027f4547
+- name: github.com/gin-gonic/gin
+  version: e2212d40c62a98b388a5eb48ecbdcf88534688ba
+  subpackages:
+  - binding
+  - render
+- name: github.com/go-ini/ini
+  version: d3de07a94d22b4a0972deb4b96d790c2c0ce8333
+- name: github.com/golang/protobuf
+  version: 2402d76f3d41f928c7902a765dfc872356dd3aad
+  subpackages:
+  - proto
+- name: github.com/jawher/mow.cli
+  version: 8327d12beb75e6471b7f045588acc318d1147146
+- name: github.com/jmespath/go-jmespath
+  version: bd40a432e4c76585ef6b72d3fd96fb9b6dc7b68d
+- name: github.com/manucorporat/sse
+  version: ee05b128a739a0fb76c7ebd3ae4810c1de808d6d
+- name: github.com/mattn/go-isatty
+  version: dda3de49cbfcec471bd7a70e6cc01fcc3ff90109
+- name: github.com/philhofer/fwd
+  version: 1612a298117663d7bc9a760ae20d383413859798
+- name: github.com/serialx/hashring
+  version: 75d57fa264ad17fd929304dfdb02c8e278c5c01c
+- name: github.com/tinylib/msgp
+  version: 1cce05a45012c07001dbfb1679c2f25ac0c189e6
+  subpackages:
+  - msgp
+- name: github.com/xlab/closer
+  version: 89cd22812c4fd5188746092cd10992caeffc75ab
+- name: golang.org/x/net
+  version: f315505cf3349909cdf013ea56690da34e96a451
+  subpackages:
+  - context
+- name: golang.org/x/sys
+  version: 075e574b89e4c2d22f2286a7e2b919519c6f3547
+  subpackages:
+  - unix
+- name: gopkg.in/go-playground/validator.v8
+  version: c193cecd124b5cc722d7ee5538e945bdb3348435
+- name: gopkg.in/yaml.v2
+  version: a3f3340b5840cee44f372bddb5880fcbc419b46a
+testImports:
+- name: github.com/davecgh/go-spew
+  version: 5215b55f46b2b919f50a1df0eaa5886afe4e3b3d
+  subpackages:
+  - spew
+- name: github.com/pmezard/go-difflib
+  version: 792786c7400a136282c1664665ae0a8db921c6c2
+  subpackages:
+  - difflib
+- name: github.com/stretchr/testify
+  version: 69483b4bd14f5845b5a1e55bca19e954e827f1d0
+  subpackages:
+  - assert

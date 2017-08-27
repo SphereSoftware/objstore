@@ -12,11 +12,12 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/jawher/mow.cli"
 	"github.com/xlab/closer"
-	"github.com/xlab/objstore"
-	"github.com/xlab/objstore/api"
-	"github.com/xlab/objstore/cluster"
-	"github.com/xlab/objstore/journal"
-	"github.com/xlab/objstore/storage"
+
+	"sphere.software/objstore"
+	"sphere.software/objstore/api"
+	"sphere.software/objstore/cluster"
+	"sphere.software/objstore/journal"
+	"sphere.software/objstore/storage"
 )
 
 var app = cli.App("objstore", "Implements robust cache-like object storage on top of S3 backend.")

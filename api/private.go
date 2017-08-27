@@ -20,7 +20,7 @@ import (
 	"github.com/astranet/astranet/addr"
 	"github.com/gin-gonic/gin"
 
-	"github.com/xlab/objstore"
+	"sphere.software/objstore"
 )
 
 type PrivateServer struct {

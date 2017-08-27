@@ -1,6 +1,6 @@
 package cluster
 
-import "github.com/xlab/objstore/journal"
+import "sphere.software/objstore/journal"
 
 type EventType int
 

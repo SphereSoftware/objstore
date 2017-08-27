@@ -1,6 +1,6 @@
 package objstore
 
-import "github.com/xlab/objstore/cluster"
+import "sphere.software/objstore/cluster"
 
 // PUMP CODE — a circular buffer
 // Copyright 2014 The Go Authors

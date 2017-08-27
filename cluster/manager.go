@@ -8,7 +8,7 @@ import (
 	"io"
 	"io/ioutil"
 
-	"github.com/xlab/objstore/journal"
+	"sphere.software/objstore/journal"
 )
 
 type ClusterManager interface {

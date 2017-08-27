@@ -5,7 +5,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/xlab/objstore"
+	"sphere.software/objstore"
 )
 
 type PublicServer struct {
