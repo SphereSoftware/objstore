@@ -304,8 +304,8 @@ func putObject(c *gin.Context, store objstore.Store) {
 	if len(meta.ID) == 0 {
 		c.String(400, "error: ID not specified, use /id to get one")
 		return
-	} else if !objstore.CheckUUID(meta.ID) {
-		err := fmt.Errorf("objstore: wrong ID: %s", meta.ID)
+	} else if !objstore.CheckID(meta.ID) {
+		err := fmt.Errorf("objstore: not a valid ULID: %s", meta.ID)
 		c.String(400, "error: %v", err)
 		return
 	}

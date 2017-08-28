@@ -6,10 +6,10 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"strconv"
 	"sync"
 	"time"
 
+	"github.com/oklog/ulid"
 	"github.com/xlab/closer"
 
 	"sphere.software/objstore/cluster"
@@ -108,7 +108,7 @@ func NewStore(nodeID string,
 	journals journal.JournalManager,
 	cluster cluster.ClusterManager,
 ) (Store, error) {
-	if !CheckUUID(nodeID) {
+	if !CheckID(nodeID) {
 		return nil, errors.New("objstore: invalid node ID")
 	}
 	if localStorage == nil {
@@ -293,7 +293,7 @@ func (o *objStore) sync(timeout time.Duration) bool {
 					}
 				case journal.ConsistencyFull:
 					// must replicate, i.e. handle the missing announce
-					meta.IsSymlink = true // temporarily, will be overriden once replicated
+					meta.IsSymlink = true // temporarily, will be overridden once replicated
 					o.ReceiveEventAnnounce(&EventAnnounce{
 						Type:     cluster.EventFileAdded,
 						FileMeta: meta,
@@ -333,13 +333,14 @@ func (o *objStore) sync(timeout time.Duration) bool {
 }
 
 func (o *objStore) processOutbound(workers int, emitTimeout time.Duration) {
-	for !o.IsReady() {
-		time.Sleep(100 * time.Millisecond)
-	}
 	for i := 0; i < workers; i++ {
 		o.outboundWg.Add(1)
 		go func() {
 			defer o.outboundWg.Done()
+
+			for !o.IsReady() {
+				time.Sleep(100 * time.Millisecond)
+			}
 			for ev := range o.outboundAnnounces {
 				if err := o.emitEvent(ev, emitTimeout); err != nil {
 					log.Println("[WARN] emitting event:", err)
@@ -350,13 +351,14 @@ func (o *objStore) processOutbound(workers int, emitTimeout time.Duration) {
 }
 
 func (o *objStore) processInbound(workers int, timeout time.Duration) {
-	for !o.IsReady() {
-		time.Sleep(100 * time.Millisecond)
-	}
 	for i := 0; i < workers; i++ {
 		o.inboundWg.Add(1)
 		go func() {
 			defer o.inboundWg.Done()
+
+			for !o.IsReady() {
+				time.Sleep(100 * time.Millisecond)
+			}
 			for ev := range o.inboundAnnounces {
 				if err := o.handleEvent(ev, timeout); err != nil {
 					log.Println("[WARN] handling event:", err)
@@ -428,27 +430,19 @@ func (s *objStore) NodeID() string {
 }
 
 func GenerateID() string {
-	return journal.PseudoUUID()
+	return journal.GetULID()
 }
 
-func CheckUUID(id string) bool {
-	// check 1: length 32 bytes
-	if len(id) != 32 {
+func CheckID(str string) bool {
+	id, err := ulid.Parse(str)
+	if err != nil {
+		log.Println("[WARN] ULID is invalid: %s: %v", str, err)
 		return false
 	}
-	// check 2: first 18 is numeric
-	for _, r := range id[:18] {
-		if r >= '0' && r <= '9' {
-			continue
-		}
-		return false
-	}
-	// check 3: timestamp must be current
-	n, _ := strconv.ParseInt("1"+id[:18], 10, 64)
-	ts := time.Unix(0, n)
-	if ts.Before(time.Date(2017, 0, 0, 0, 0, 0, 0, time.UTC)) ||
+	ts := time.Unix(int64(id.Time()/1000), 0)
+	if ts.Before(time.Date(2010, 0, 0, 0, 0, 0, 0, time.UTC)) ||
 		ts.After(time.Date(2100, 0, 0, 0, 0, 0, 0, time.UTC)) {
-		log.Println("[WARN] ID has timestamp:", ts, "which is not current")
+		log.Println("[WARN] ULID has timestamp:", ts, "which is not current")
 		return false
 	}
 	return true

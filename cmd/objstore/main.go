@@ -20,13 +20,13 @@ import (
 	"sphere.software/objstore/storage"
 )
 
-var app = cli.App("objstore", "Implements robust cache-like object storage on top of S3 backend.")
+var app = cli.App("objstore", "A Multi-Master Distributed Caching Layer for Amazon S3.\nVersion 0.1\thttp://github.com/SphereSoftware/objstore")
 
 var (
 	debugEnabled bool
 	debugLevel   = app.Int(cli.IntOpt{
 		Name:      "d debug",
-		Desc:      "Debug level to use (0-3)",
+		Desc:      "Debug level to use, currently 0/1 suppported.",
 		EnvVar:    "APP_DEBUG_LEVEL",
 		Value:     0,
 		HideValue: true,
@@ -54,7 +54,7 @@ var (
 		Name:   "debug-addr",
 		Desc:   "Listen address for private API debugging using external tools",
 		EnvVar: "NET_DEBUG_ADDR",
-		Value:  "0.0.0.0:10080",
+		Value:  "",
 	})
 	publicAddr = app.String(cli.StringOpt{
 		Name:   "public-addr",
@@ -84,7 +84,7 @@ var (
 		Name:   "B bucket",
 		Desc:   "Amazon S3 bucket name",
 		EnvVar: "S3_BUCKET_NAME",
-		Value:  "objstore-stage-1",
+		Value:  "00-objstore-test",
 	})
 )
 
@@ -125,9 +125,9 @@ func appMain() {
 		closer.Fatalln("[ERR] unable to create local files dir:", err)
 	}
 
-	nodeID := journal.PseudoUUID()
+	nodeID := journal.GetULID()
 	if debugEnabled {
-		log.Println("[INFO] node ID", nodeID)
+		log.Println("[INFO] node ID:", nodeID)
 	}
 
 	privateServer := api.NewPrivateServer(nodeID, *clusterName)
@@ -186,7 +186,7 @@ func appMain() {
 	}
 	// expose private API to HTTP clients, so objstore cluster nodes can be debugged
 	// using browser and external tools.
-	if debugEnabled {
+	if debugEnabled && len(*debugAddr) > 0 {
 		log.Println("[INFO] exposing private API on", *debugAddr)
 		go func() {
 			if err := privateServer.ExposeAPI(*debugAddr); err != nil {

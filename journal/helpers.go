@@ -1,38 +1,21 @@
 package journal
 
 import (
-	"encoding/hex"
 	"math/rand"
-	"strconv"
-	"strings"
 	"sync"
 	"time"
-	"unsafe"
-)
 
-func trimPad(v string) string {
-	switch {
-	case len(v) == 0:
-		return ""
-	case len(v) < 6:
-		return strings.Repeat("0", 6-len(v)) + v
-	default:
-		return v[:6]
-	}
-}
+	"github.com/oklog/ulid"
+)
 
 var globalRand = rand.New(&lockedSource{
 	src: rand.NewSource(time.Now().UnixNano()),
 })
 
-// 9 bytes of unixnano and 7 random bytes
-func PseudoUUID() string {
-	now := time.Now().UnixNano()
-	randPart := make([]byte, 7)
-	if _, err := globalRand.Read(randPart); err != nil {
-		copy(randPart, (*(*[8]byte)(unsafe.Pointer(&now)))[:7])
-	}
-	return strconv.FormatInt(now, 10)[1:] + hex.EncodeToString(randPart)
+// GetULID constucts an Universally Unique Lexicographically Sortable Identifier.
+// See https://github.com/oklog/ulid
+func GetULID() string {
+	return ulid.MustNew(ulid.Timestamp(time.Now()), globalRand).String()
 }
 
 type lockedSource struct {
