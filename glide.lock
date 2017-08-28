@@ -1,5 +1,5 @@
-hash: 28a225e35b84f3f5622752670370bc445bbd0433d9f42becbe950692dc71e5d0
-updated: 2017-06-27T02:04:20.072817794+03:00
+hash: dac827ec9b936d98e9d57a9cbb2a4b436a4ed0a8a20f331a805cf0d9a66c041b
+updated: 2017-08-29T01:39:08.521273101+03:00
 imports:
 - name: github.com/astranet/astranet
   version: ededf87e9f24d6482bf900c46bcf57e52cb73cee
@@ -20,7 +20,7 @@ imports:
   - util
   - uuid
 - name: github.com/aws/aws-sdk-go
-  version: 72e42b13da62269f68308fb6068b7ea691a416a4
+  version: e63027ac6e05f6d4ae9f97ce0294d7468ca652da
   subpackages:
   - aws
   - aws/awserr
@@ -48,44 +48,46 @@ imports:
   - service/s3
   - service/sts
 - name: github.com/boltdb/bolt
-  version: 583e8937c61f1af6513608ccc75c97b6abdf4ff9
+  version: 2f1ce7a837dcb8da3ec595b1dac9d0632f0f99e8
 - name: github.com/cenk/backoff
   version: cdf48bbc1eb78d1349cbda326a4a037f7ba565c6
 - name: github.com/cznic/b
   version: 6955404bf550e1eae1bf83121739078b027f4547
+- name: github.com/gin-contrib/sse
+  version: 22d885f9ecc78bf4ee5d72b937e4bbcdc58e8cae
 - name: github.com/gin-gonic/gin
-  version: e2212d40c62a98b388a5eb48ecbdcf88534688ba
+  version: d459835d2b077e44f7c9b453505ee29881d5d12d
   subpackages:
   - binding
   - render
 - name: github.com/go-ini/ini
-  version: d3de07a94d22b4a0972deb4b96d790c2c0ce8333
+  version: c787282c39ac1fc618827141a1f762240def08a3
 - name: github.com/golang/protobuf
   version: 2402d76f3d41f928c7902a765dfc872356dd3aad
   subpackages:
   - proto
 - name: github.com/jawher/mow.cli
-  version: 8327d12beb75e6471b7f045588acc318d1147146
+  version: a459d5906bb7a9c5eda7c4d02eec7c541120226e
 - name: github.com/jmespath/go-jmespath
   version: bd40a432e4c76585ef6b72d3fd96fb9b6dc7b68d
-- name: github.com/manucorporat/sse
-  version: ee05b128a739a0fb76c7ebd3ae4810c1de808d6d
 - name: github.com/mattn/go-isatty
   version: dda3de49cbfcec471bd7a70e6cc01fcc3ff90109
+- name: github.com/oklog/ulid
+  version: 66bb6560562feca7045b23db1ae85b01260f87c5
 - name: github.com/philhofer/fwd
   version: 1612a298117663d7bc9a760ae20d383413859798
 - name: github.com/serialx/hashring
   version: 75d57fa264ad17fd929304dfdb02c8e278c5c01c
 - name: github.com/tinylib/msgp
-  version: 1cce05a45012c07001dbfb1679c2f25ac0c189e6
+  version: b2b6a672cf1e5b90748f79b8b81fc8c5cf0571a1
   subpackages:
   - msgp
+- name: github.com/ugorji/go
+  version: c88ee250d0221a57af388746f5cf03768c21d6e2
+  subpackages:
+  - codec
 - name: github.com/xlab/closer
   version: 89cd22812c4fd5188746092cd10992caeffc75ab
-- name: golang.org/x/net
-  version: f315505cf3349909cdf013ea56690da34e96a451
-  subpackages:
-  - context
 - name: golang.org/x/sys
   version: 075e574b89e4c2d22f2286a7e2b919519c6f3547
   subpackages:
@@ -96,11 +98,11 @@ imports:
   version: a3f3340b5840cee44f372bddb5880fcbc419b46a
 testImports:
 - name: github.com/davecgh/go-spew
-  version: 5215b55f46b2b919f50a1df0eaa5886afe4e3b3d
+  version: 6d212800a42e8ab5c146b8ace3490ee17e5225f9
   subpackages:
   - spew
 - name: github.com/pmezard/go-difflib
-  version: 792786c7400a136282c1664665ae0a8db921c6c2
+  version: d8ed2627bdf02c080bf22230dbb337003b7aba2d
   subpackages:
   - difflib
 - name: github.com/stretchr/testify
