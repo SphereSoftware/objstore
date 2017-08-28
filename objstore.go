@@ -218,7 +218,7 @@ func (o *objStore) sync(timeout time.Duration) bool {
 	}
 
 	wg := new(sync.WaitGroup)
-	ctx, _ := context.WithTimeout(context.Background(), timeout)
+	ctx, cancelFn := context.WithTimeout(context.Background(), timeout)
 
 	var listAdded journal.FileMetaList
 	var listDeleted journal.FileMetaList
@@ -241,6 +241,7 @@ func (o *objStore) sync(timeout time.Duration) bool {
 		}(node)
 	}
 	wg.Wait()
+	cancelFn()
 
 	setAdded := make(map[string]*journal.FileMeta, len(listAdded))
 	setDeleted := make(map[string]*journal.FileMeta, len(listDeleted))
@@ -451,8 +452,8 @@ func CheckID(str string) bool {
 func (o *objStore) emitEvent(ev *EventAnnounce, timeout time.Duration) error {
 	wg := new(sync.WaitGroup)
 	defer wg.Wait()
-
-	ctx, _ := context.WithTimeout(context.Background(), timeout)
+	ctx, cancelFn := context.WithTimeout(context.Background(), timeout)
+	defer cancelFn()
 	nodes, err := o.cluster.ListNodes()
 	if err != nil {
 		return err
@@ -521,8 +522,9 @@ func (o *objStore) handleEvent(ev *EventAnnounce, timeout time.Duration) error {
 		meta := (*FileMeta)(ev.FileMeta)
 		if meta.Consistency == journal.ConsistencyFull {
 			// need to replicate the file locally
-			ctx, _ := context.WithTimeout(context.Background(), timeout)
+			ctx, cancelFn := context.WithTimeout(context.Background(), timeout)
 			r, err := o.findOnCluster(ctx, id)
+			cancelFn()
 			if err == ErrNotFound {
 				if o.debug {
 					log.Println("[INFO] file not found on cluster:", ev.FileMeta)

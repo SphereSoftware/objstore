@@ -6,7 +6,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-var noID ID = ""
+var noID ID
 
 func TestBtreeDiffBtree(t *testing.T) {
 	assert := assert.New(t)

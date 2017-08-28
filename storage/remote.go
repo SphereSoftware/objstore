@@ -128,7 +128,6 @@ func (s *s3Storage) ListObjects(prefix string, startAfter ...string) ([]*Spec, e
 			return specs, nil
 		}
 	}
-	return specs, nil
 }
 
 func (s *s3Storage) CheckAccess(prefix string) error {

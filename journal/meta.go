@@ -68,7 +68,7 @@ type FileMetaList []*FileMeta
 
 func (m FileMeta) String() string {
 	if m.IsDeleted {
-		return fmt.Sprintf("%s: %s (deleted)")
+		return fmt.Sprintf("%s: %s (deleted)", m.ID, m.Name)
 	}
 	return fmt.Sprintf("%s: %s (%db->%v)", m.ID, m.Name, m.Size, m.IsSymlink)
 }
