@@ -100,7 +100,7 @@ func (z *FileMeta) DecodeMsg(dc *msgp.Reader) (err error) {
 			if z.UserMeta == nil && zwht > 0 {
 				z.UserMeta = make(map[string]string, zwht)
 			} else if len(z.UserMeta) > 0 {
-				for key, _ := range z.UserMeta {
+				for key := range z.UserMeta {
 					delete(z.UserMeta, key)
 				}
 			}
@@ -332,7 +332,7 @@ func (z *FileMeta) UnmarshalMsg(bts []byte) (o []byte, err error) {
 			if z.UserMeta == nil && zxhx > 0 {
 				z.UserMeta = make(map[string]string, zxhx)
 			} else if len(z.UserMeta) > 0 {
-				for key, _ := range z.UserMeta {
+				for key := range z.UserMeta {
 					delete(z.UserMeta, key)
 				}
 			}
