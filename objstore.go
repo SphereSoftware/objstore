@@ -38,7 +38,7 @@ type Store interface {
 	FindObject(ctx context.Context, id string, fetch bool) (io.ReadCloser, *FileMeta, error)
 	// FetchObject retrieves an object from the remote storage, e.g. Amazon S3.
 	// This should be called only on a total cache miss, when file is not found
-	// on any node of the cluster.
+	// on any node of the cluster. If supplied ID is not a valid ULID, resulting meta will have a new ID.
 	FetchObject(ctx context.Context, id string) (io.ReadCloser, *FileMeta, error)
 	// PutObject writes object to the local storage, emits cluster announcements, optionally
 	// writes object to remote storage, e.g. Amazon S3. Returns amount of bytes written.
@@ -453,7 +453,6 @@ func (o *objStore) emitEvent(ev *EventAnnounce, timeout time.Duration) error {
 	wg := new(sync.WaitGroup)
 	defer wg.Wait()
 	ctx, cancelFn := context.WithTimeout(context.Background(), timeout)
-	defer cancelFn()
 	nodes, err := o.cluster.ListNodes()
 	if err != nil {
 		return err
@@ -465,6 +464,7 @@ func (o *objStore) emitEvent(ev *EventAnnounce, timeout time.Duration) error {
 		wg.Add(1)
 		go func(node *cluster.NodeInfo) {
 			defer wg.Done()
+			defer cancelFn()
 			if err := o.cluster.Announce(ctx, node.ID, (*cluster.EventAnnounce)(ev)); err != nil {
 				log.Println("[WARN] announce error:", err)
 			}
@@ -538,6 +538,7 @@ func (o *objStore) handleEvent(ev *EventAnnounce, timeout time.Duration) error {
 					return nil
 				}
 				meta.Consistency = journal.ConsistencyFull
+				id = meta.ID // id is the same or new
 			}
 			meta.IsSymlink = false
 			if _, err := o.storeLocal(r, meta); err != nil {
@@ -671,11 +672,16 @@ func (o *objStore) FindObject(ctx context.Context,
 			log.Println("[INFO] file not found on cluster:", id)
 		}
 	}
-	//  fetch from remote store
+	// fetch from remote store
 	r, meta, err = o.FetchObject(ctx, id)
 	if err == ErrNotFound {
 		return nil, nil, ErrNotFound
+	} else if err != nil {
+		log.Println("[WARN] unknown error:", err)
+		return nil, nil, err
 	}
+	// id is the same or new
+	id = meta.ID
 	// store it locally
 	meta.IsSymlink = false
 	if (meta.Consistency) == 0 {
@@ -714,12 +720,18 @@ func (o *objStore) FindObject(ctx context.Context,
 
 func (o *objStore) FetchObject(ctx context.Context, id string) (io.ReadCloser, *FileMeta, error) {
 	spec, err := o.remoteStorage.GetObject(id)
-	if err != nil {
+	if err == storage.ErrNotFound {
+		return nil, nil, ErrNotFound
+	} else if err != nil {
 		return nil, nil, err
 	}
 	meta := new(journal.FileMeta)
 	meta.Unmap(spec.Meta)
 	meta.ID = id
+	if !CheckID(id) {
+		// generate a new ID for the file to store in the journals
+		meta.ID = GenerateID()
+	}
 	if spec.Size > 0 {
 		meta.Size = spec.Size
 	}

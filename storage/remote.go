@@ -1,11 +1,13 @@
 package storage
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"mime"
 	"path"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
@@ -23,6 +25,8 @@ type RemoteStorage interface {
 	CheckAccess(prefix string) error
 	Bucket() string
 }
+
+var ErrNotFound = errors.New("NoSuchKey: The specified key does not exist.")
 
 type s3Storage struct {
 	bucket string
@@ -61,6 +65,9 @@ func (s *s3Storage) GetObject(key string, version ...string) (*Spec, error) {
 		VersionId: awsStringMaybe(version),
 	})
 	if err != nil {
+		if strings.HasPrefix(err.Error(), "NoSuchKey") {
+			return nil, ErrNotFound
+		}
 		return nil, err
 	}
 	spec := &Spec{

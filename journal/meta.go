@@ -77,7 +77,7 @@ type ConsistencyLevel int
 
 const (
 	// ConsistencyLocal flags file for local persistence only, implying
-	// that the file body will be stored on a single node.
+	// that the file body will be stored on a single node. Default.
 	ConsistencyLocal ConsistencyLevel = 0
 	// ConsistencyS3 flags file for local+S3 persistence, implying that the file
 	// body will be stored on a single node and Amazon S3.

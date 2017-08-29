@@ -262,7 +262,7 @@ func serveMeta(c *gin.Context, meta *objstore.FileMeta) {
 
 func serveObject(c *gin.Context, r io.ReadCloser, meta *objstore.FileMeta) {
 	serveMeta(c, meta)
-	ts := time.Unix(meta.Timestamp, 0)
+	ts := time.Unix(0, meta.Timestamp)
 	if seekable, ok := r.(io.ReadSeeker); ok {
 		http.ServeContent(c.Writer, c.Request, meta.Name, ts, seekable)
 		return
