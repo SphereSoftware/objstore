@@ -437,7 +437,7 @@ func GenerateID() string {
 func CheckID(str string) bool {
 	id, err := ulid.Parse(str)
 	if err != nil {
-		log.Println("[WARN] ULID is invalid: %s: %v", str, err)
+		log.Printf("[WARN] ULID is invalid: %s: %v", str, err)
 		return false
 	}
 	ts := time.Unix(int64(id.Time()/1000), 0)
@@ -450,9 +450,10 @@ func CheckID(str string) bool {
 }
 
 func (o *objStore) emitEvent(ev *EventAnnounce, timeout time.Duration) error {
+	ctx, cancelFn := context.WithTimeout(context.Background(), timeout)
+	defer cancelFn()
 	wg := new(sync.WaitGroup)
 	defer wg.Wait()
-	ctx, cancelFn := context.WithTimeout(context.Background(), timeout)
 	nodes, err := o.cluster.ListNodes()
 	if err != nil {
 		return err
@@ -464,7 +465,6 @@ func (o *objStore) emitEvent(ev *EventAnnounce, timeout time.Duration) error {
 		wg.Add(1)
 		go func(node *cluster.NodeInfo) {
 			defer wg.Done()
-			defer cancelFn()
 			if err := o.cluster.Announce(ctx, node.ID, (*cluster.EventAnnounce)(ev)); err != nil {
 				log.Println("[WARN] announce error:", err)
 			}
