@@ -5,7 +5,7 @@
 # objstore [![Go Report Card](https://goreportcard.com/badge/sphere.software/objstore)](https://goreportcard.com/report/sphere.software/objstore) ![Status Badge](https://img.shields.io/badge/status-open--beta-orange.svg)
 _A Multi-Master Distributed Caching Layer for Amazon S3_
 
-This project aims to provide an easy to use, self-organising multi-master caching layer for various cloud stoarge backends, e.g. S3. It combines functionality of a simple object storage with added robustness of cross-node journal synchronisation, object replication and cluster auto-discovery.
+This project aims to provide an easy to use, self-organising multi-master caching layer for various cloud storage backends, e.g. S3. It combines functionality of a simple object storage with added robustness of cross-node journal synchronisation, object replication and cluster auto-discovery.
 
 We know that Amazon S3 has proven to be fast and reliable, a PaaS solution that acts like a
 backbone for many business applications. But the cost of service may become too high
